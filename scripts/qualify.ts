@@ -1,7 +1,11 @@
 // Explicit, non-visual deployment qualification. Never imports Microcosm code.
 import { randomUUID } from "node:crypto";
 import { parseGraphDocument } from "@axiom-foundation/orrery";
-import { inventory, inventoryDigest, sha256 } from "../lib/contract";
+import { inventory } from "@policyengine/microcosm-provider-orrery/contract";
+import {
+  inventoryDigest,
+  sha256,
+} from "@policyengine/microcosm-provider-orrery/server";
 import { createService } from "../lib/service";
 import { blobStorage } from "../lib/storage";
 

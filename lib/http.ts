@@ -1,4 +1,7 @@
-import { ApiError, inventory } from "./contract";
+import {
+  ApiError,
+  inventory,
+} from "@policyengine/microcosm-provider-orrery/contract";
 import { authorize } from "./auth";
 import { createService } from "./service";
 import { blobStorage, type Storage } from "./storage";

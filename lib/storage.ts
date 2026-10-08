@@ -1,5 +1,5 @@
 import { get, put, issueSignedToken, presignUrl } from "@vercel/blob";
-import { ApiError } from "./contract";
+import { ApiError } from "@policyengine/microcosm-provider-orrery/contract";
 
 export interface Storage {
   read(

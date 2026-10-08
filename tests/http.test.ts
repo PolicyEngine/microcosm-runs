@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { write } from "../lib/http";
-import { ApiError, objectPath } from "../lib/contract";
+import { ApiError } from "@policyengine/microcosm-provider-orrery/contract";
+import { objectPath } from "@policyengine/microcosm-provider-orrery/server";
 import { syntheticPublication } from "../scripts/qualify";
 import type { Storage } from "../lib/storage";
 

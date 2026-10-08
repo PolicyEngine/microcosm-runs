@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { authorize, collectorOrigin } from "../lib/auth";
 import type { Fetcher } from "../lib/net";
-import { inventory, inventoryDigest } from "../lib/contract";
+import { inventory } from "@policyengine/microcosm-provider-orrery/contract";
+import { inventoryDigest } from "@policyengine/microcosm-provider-orrery/server";
 const value = inventory({
   version: 1,
   publication_id: "standalone",

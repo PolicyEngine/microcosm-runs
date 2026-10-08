@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@axiom-foundation/orrery": "0.6.1",
+    "@policyengine/microcosm-provider-orrery": "github:PolicyEngine/microcosm-local-provider#b9e8b680feec9a6b4f7483d307bd96165c362087",
     "@policyengine/ui-kit": "^0.4.0",
     "@vercel/blob": "^2.8.1",
     "next": "^16.2.6",

@@ -1,4 +1,8 @@
-import { ApiError, inventoryDigest, type Inventory } from "./contract";
+import {
+  ApiError,
+  type Inventory,
+} from "@policyengine/microcosm-provider-orrery/contract";
+import { inventoryDigest } from "@policyengine/microcosm-provider-orrery/server";
 import type { Fetcher } from "./net";
 
 export const PRODUCTION_COLLECTOR_ORIGIN =

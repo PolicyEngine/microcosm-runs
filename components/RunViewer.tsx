@@ -6,7 +6,7 @@ import {
   type GraphDocument,
 } from "@axiom-foundation/orrery";
 import { Orrery } from "@axiom-foundation/orrery/react";
-import { loadDocument } from "@/lib/viewer";
+import { loadDocument } from "@policyengine/microcosm-provider-orrery/browser";
 
 function subscribe(callback: () => void) {
   window.addEventListener("hashchange", callback);

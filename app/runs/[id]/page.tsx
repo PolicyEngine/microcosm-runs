@@ -1,4 +1,4 @@
-import { publicationId } from "@/lib/contract";
+import { publicationId } from "@policyengine/microcosm-provider-orrery/contract";
 import RunViewer from "@/components/RunViewer";
 import { notFound } from "next/navigation";
 export default async function Page({

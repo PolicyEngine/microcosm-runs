@@ -3,11 +3,13 @@ import { createService } from "../lib/service";
 import {
   ApiError,
   inventory,
+  type Inventory,
+} from "@policyengine/microcosm-provider-orrery/contract";
+import {
   objectPath,
   publicationPath,
   sha256,
-  type Inventory,
-} from "../lib/contract";
+} from "@policyengine/microcosm-provider-orrery/server";
 import type { Storage } from "../lib/storage";
 
 const encoder = new TextEncoder();
@@ -140,4 +142,27 @@ test("publications require no run id and reserved ids cannot change content", as
     "publication_conflict",
   );
   expect(Object.hasOwn(f.value, "run_id")).toBe(false);
+});
+
+test("read and evidence routes use validated completed-publication metadata", async () => {
+  const f = fixture();
+  f.upload();
+  const published = await f.service.publish(f.value);
+  expect(await f.service.read(f.value.publication_id)).toEqual(published);
+  expect(
+    await f.service.evidence(f.value.publication_id, "graph.orrery.json"),
+  ).toBe(published.files[0].url);
+  expect(
+    await f.service.evidence(f.value.publication_id, "private.h5"),
+  ).toBeNull();
+  expect(await f.service.read("unpublished")).toBeNull();
+  f.data.set(
+    publicationPath(f.value.publication_id),
+    encoder.encode(
+      JSON.stringify({ ...published, inventory_sha256: "a".repeat(64) }),
+    ),
+  );
+  await expect(f.service.read(f.value.publication_id)).rejects.toThrow(
+    "inventory_digest_mismatch",
+  );
 });

@@ -5,6 +5,30 @@ It loads published graph JSON directly from Vercel Blob, verifies its digest,
 and keeps selection/filter state in linkable URL fragments. It does not embed
 generated HTML or accept population datasets.
 
+The provider's `/browser` package owns bounded document downloads, metadata and
+digest validation, and Orrery parsing. Its `/server` package reads completed
+publication records and resolves only listed evidence through this app's storage
+adapter. The app retains Next routes, the React component, URL state, collector
+authorization, immutable writes and Vercel Blob credentials. It does not start a
+Python service or move the calibration dashboard's telemetry.
+
+## Deferred provider adoption
+
+This migration is implemented in a draft PR stacked on #1. Do not merge or deploy
+it until PolicyEngine/microcosm-local-provider#4 is merged and its reader package
+is published. The draft pins provider commit
+`b9e8b680feec9a6b4f7483d307bd96165c362087` for reproducible source-based tests.
+Before merge, replace that Git dependency with registry version `0.1.0`, regenerate
+`bun.lock`, remove the draft-only webpack extension alias and rerun every check
+below. The registry artifact contains compiled JavaScript and declarations.
+
+No new environment variables, secrets, stores or endpoints are introduced by this
+migration. Existing provisioning remains unchanged. Provider contract and browser
+reader tests live in the provider repository; this app retains its own HTTP,
+write-service, authorization, URL-state and provisioning tests using synthetic
+data and in-memory storage. Neither repository adds a test of a Microcosm build
+against the runs app.
+
 ## Publication API
 
 1. POST a version-1 file inventory to `/api/uploads/` with a short-lived collector

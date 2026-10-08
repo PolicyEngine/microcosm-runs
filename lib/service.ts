@@ -2,15 +2,17 @@ import { parseGraphDocument } from "@axiom-foundation/orrery";
 import {
   ApiError,
   inventory,
+  type Inventory,
+  type Publication,
+} from "@policyengine/microcosm-provider-orrery/contract";
+import {
   inventoryDigest,
   objectPath,
   publicationPath,
-  publicationId,
   sha256,
-  type Inventory,
-  type Publication,
-} from "./contract";
+} from "@policyengine/microcosm-provider-orrery/server";
 import type { Storage } from "./storage";
+import { createPublicationReader } from "@policyengine/microcosm-provider-orrery/server";
 
 const encode = (value: unknown) =>
   new TextEncoder().encode(JSON.stringify(value));
@@ -35,10 +37,7 @@ export function checkSources(value: unknown, names: Set<string>): void {
   }
 }
 export function createService(storage: Storage, subject: string) {
-  async function read(id: string): Promise<Publication | null> {
-    const object = await storage.read(publicationPath(id), 256 * 1024);
-    return object ? (decode(object.bytes) as Publication) : null;
-  }
+  const { read, evidence } = createPublicationReader(storage);
   async function reserve(value: Inventory) {
     if (!subject) throw new ApiError(401, "unauthorized");
     const claim = { subject, inventory_sha256: inventoryDigest(value) };
@@ -132,9 +131,6 @@ export function createService(storage: Storage, subject: string) {
         throw new ApiError(409, "publication_conflict");
       return winner;
     },
-    async evidence(id: string, name: string) {
-      const published = await read(publicationId(id));
-      return published?.files.find((f) => f.name === name)?.url ?? null;
-    },
+    evidence,
   };
 }
