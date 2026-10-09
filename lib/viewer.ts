@@ -24,15 +24,22 @@ export async function loadDocument(
     file.bytes > 64 * 1024 * 1024
   )
     throw new Error("Invalid graph publication metadata.");
-  const url = new URL(file.url);
-  if (
-    url.protocol !== "https:" ||
-    !url.hostname.endsWith(".public.blob.vercel-storage.com") ||
-    url.username ||
-    url.password
-  )
-    throw new Error("Invalid graph storage URL.");
-  const graph = await fetcher(url, { signal });
+  // A local development server serves the graph from this app's own route;
+  // otherwise only public Blob storage is accepted.
+  const local = `/runs/${encodeURIComponent(id)}/graph.orrery.json`;
+  let source: string | URL = local;
+  if (file.url !== local) {
+    const url = new URL(file.url);
+    if (
+      url.protocol !== "https:" ||
+      !url.hostname.endsWith(".public.blob.vercel-storage.com") ||
+      url.username ||
+      url.password
+    )
+      throw new Error("Invalid graph storage URL.");
+    source = url;
+  }
+  const graph = await fetcher(source, { signal });
   if (!graph.ok || !graph.body)
     throw new Error("The stored graph is unavailable.");
   const reader = graph.body.getReader();

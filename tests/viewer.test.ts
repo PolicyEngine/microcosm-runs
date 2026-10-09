@@ -74,3 +74,51 @@ test("Orrery deep links preserve selections and filters", () => {
   };
   expect(decodeLocation(encodeLocation(location))).toMatchObject(location);
 });
+
+test("viewer reads a local development graph from this app's own route", async () => {
+  const bytes = JSON.stringify(document);
+  const calls: string[] = [];
+  const fetcher = (async (url) => {
+    calls.push(String(url));
+    return calls.length === 1
+      ? Response.json({
+          publication_id: "graph",
+          files: [
+            {
+              name: "graph.orrery.json",
+              role: "graph",
+              bytes: new TextEncoder().encode(bytes).length,
+              sha256: sha256(bytes),
+              url: "/runs/graph/graph.orrery.json",
+            },
+          ],
+        })
+      : new Response(bytes);
+  }) as Fetcher;
+  await loadDocument("graph", new AbortController().signal, fetcher);
+  expect(calls[1]).toBe("/runs/graph/graph.orrery.json");
+});
+
+test("viewer refuses other same-origin or non-Blob graph locations", async () => {
+  for (const url of [
+    "/runs/other/graph.orrery.json",
+    "https://example.com/graph.json",
+  ]) {
+    const fetcher = (async () =>
+      Response.json({
+        publication_id: "graph",
+        files: [
+          {
+            name: "graph.orrery.json",
+            role: "graph",
+            bytes: 1,
+            sha256: "0".repeat(64),
+            url,
+          },
+        ],
+      })) as Fetcher;
+    await expect(
+      loadDocument("graph", new AbortController().signal, fetcher),
+    ).rejects.toThrow();
+  }
+});

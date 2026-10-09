@@ -77,6 +77,25 @@ access, installs non-secret store IDs in the three exact scopes, and refreshes
 ignored local credentials. Public access is deliberate: writes still require
 collector authentication.
 
+## Viewing local Microcosm output
+
+To view graphs from a local Microcosm build without Blob storage or collector
+authentication, point the development server at a directory of preserved
+publications:
+
+```sh
+MICROCOSM_RUNS_LOCAL_DIR=/path/to/publications bun run dev
+```
+
+The directory, or any directory directly inside it, holds one publication: its
+`orrery.upload.json` inventory and the files that inventory lists, as Microcosm
+writes them to `orrery-publication/` in a build's attempt evidence. Open
+`http://localhost:3014/runs/<publication_id>/`. The metadata and file routes
+then read from disk and apply the same size, SHA-256, JSON, Orrery and source
+reference checks as publication. Files the inventory does not list are never
+served. Upload and publication requests still use Blob storage. A production
+server refuses this setting.
+
 ## Validation and deployment
 
 ```sh
