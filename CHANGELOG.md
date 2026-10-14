@@ -1,3 +1,10 @@
+## [0.2.2] - 2026-10-14
+
+### Fixed
+
+- Release commits pass the format check again: Prettier now skips the towncrier-generated `CHANGELOG.md`, whose blank lines between releases it rejected, so 0.2.1 was never tagged or deployed. Changelog fragments are still checked.
+
+
 ## [0.2.1] - 2026-10-14
 
 ### Fixed
