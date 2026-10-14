@@ -108,8 +108,8 @@ MICROCOSM_SESSION_TOKEN=... bun run qualify
 This separately qualifies this app's deployed HTTP endpoints and storage using
 only synthetic data. It does not run a Microcosm pipeline. Never log that token.
 
-Deploy with `vercel --prod --yes --scope policy-engine` after the required
-checks. No collector JWT signing key is copied to Vercel. The current production
+Production deploys only from `main`, through the release workflow below. No
+collector JWT signing key is copied to Vercel. The current production
 collector origin is tracked in `lib/auth.ts`; authorization fails closed until
 its new endpoint is deployed. The collector's existing main-only workflow owns
 its rollout; this repository cannot deploy that service.
@@ -117,3 +117,27 @@ its rollout; this repository cannot deploy that service.
 For visual verification, run the local preview at http://localhost:3014 and
 inspect a published synthetic graph manually. Automated checks do not use a
 browser, screenshots, or rendered-DOM inspection.
+
+## Releases
+
+Each pull request adds a changelog fragment named
+`changelog.d/<name>.<type>.md`, where the type is `breaking`, `added`,
+`changed`, `fixed` or `removed`. `.github/check-changelog.sh` refuses a pull
+request without one.
+
+`push.yaml` runs twice for each merge to `main`:
+
+1. On the merge commit, it bumps the version in `package.json`: a major bump
+   for a breaking fragment, a minor bump for an added or removed fragment, and a
+   patch bump otherwise. It collects the fragments into `CHANGELOG.md` and
+   commits the result as "Update microcosm-runs" using the PolicyEngine GitHub
+   App, which may bypass the `main` ruleset.
+2. On that commit, it runs every check, tags the commit with the bare version
+   (for example `0.2.0`), then builds and deploys that commit to Vercel
+   production and checks the public homepage. Each step starts only after the
+   one before succeeds.
+
+The deploy job uses `VERCEL_TOKEN` from the GitHub `Production` environment,
+which only `main` can use. `vercel.json` turns off Vercel's own production
+deploys from `main`, so production never skips the checks; pull request
+previews still deploy.

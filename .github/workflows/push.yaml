@@ -1,0 +1,75 @@
+name: Push
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+# Every merge runs this workflow twice. On the merge commit, versioning commits
+# the new version and changelog as "Update microcosm-runs" with the PolicyEngine
+# GitHub App token: unlike GITHUB_TOKEN, its push starts another run, and the
+# app may bypass the main ruleset. On that release commit, the remaining jobs
+# verify, tag, then deploy, each only after the one before.
+jobs:
+  versioning:
+    name: Update versioning
+    if: |
+      github.repository == 'PolicyEngine/microcosm-runs'
+      && github.event.head_commit.message != 'Update microcosm-runs'
+    runs-on: ubuntu-latest
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+      - uses: astral-sh/setup-uv@v6
+      - run: bash .github/update-version.sh
+      - uses: EndBug/add-and-commit@v10
+        with:
+          add: "."
+          author_name: Github Actions[bot]
+          committer_name: Github Actions[bot]
+          message: Update microcosm-runs
+          github_token: ${{ steps.app-token.outputs.token }}
+          fetch: false
+  verify:
+    if: |
+      github.repository == 'PolicyEngine/microcosm-runs'
+      && github.event.head_commit.message == 'Update microcosm-runs'
+    uses: ./.github/workflows/ci.yml
+  tag:
+    name: Publish git tag
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: bash .github/publish-git-tag.sh
+  deploy:
+    name: Deploy to Vercel production
+    needs: tag
+    runs-on: ubuntu-latest
+    # Holds VERCEL_TOKEN and accepts only main.
+    environment: Production
+    concurrency:
+      group: microcosm-runs-production
+      cancel-in-progress: false
+    env:
+      VERCEL_ORG_ID: team_xsyTmFLMLGbHH7Qxu70R5G4r
+      VERCEL_PROJECT_ID: prj_RAM9oGKvN56ear62Y2kRTwVdh1Rs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bash .github/deploy-production.sh
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
