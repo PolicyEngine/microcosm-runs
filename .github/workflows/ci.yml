@@ -1,13 +1,10 @@
 name: CI
+# Called by pr.yaml for every pull request and by push.yaml before tagging and
+# deploying a release commit.
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_call:
 permissions:
   contents: read
-concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: true
 jobs:
   checks:
     runs-on: ubuntu-latest

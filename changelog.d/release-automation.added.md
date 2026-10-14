@@ -1,0 +1,1 @@
+Release and deploy automatically on every merge to main: bump the version from the changelog fragment types, commit the changelog, run all checks, tag the commit with the bare version, then deploy that commit to Vercel production. Pull requests now require a typed changelog fragment, and Vercel no longer deploys main to production on its own.
