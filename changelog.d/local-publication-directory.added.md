@@ -1,0 +1,1 @@
+View graphs from a local Microcosm build during development: set `MICROCOSM_RUNS_LOCAL_DIR` to a directory of preserved publications, and the metadata and file routes read them from disk with the same size, digest, JSON, Orrery and source-reference checks as publication. Production servers refuse the setting.
