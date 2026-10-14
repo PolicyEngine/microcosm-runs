@@ -1,1 +1,0 @@
-Deploy releases to Vercel production again: the deploy job now runs the Vercel CLI under Node. Under Bun, the build output referenced Bun's cache instead of the project's locked Next.js, so Vercel rejected the 0.2.0 deployment.
