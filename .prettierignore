@@ -4,3 +4,5 @@ node_modules
 bun.lock
 next-env.d.ts
 credentials
+# towncrier generates the changelog on release; fragments are still checked.
+CHANGELOG.md
