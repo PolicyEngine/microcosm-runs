@@ -12,15 +12,14 @@ adapter. The app retains Next routes, the React component, URL state, collector
 authorization, immutable writes and Vercel Blob credentials. It does not start a
 Python service or move the calibration dashboard's telemetry.
 
-## Deferred provider adoption
+## Provider package
 
-This migration is implemented in a draft PR stacked on #1. Do not merge or deploy
-it until PolicyEngine/microcosm-local-provider#4 is merged and its reader package
-is published. The draft pins provider commit
-`b9e8b680feec9a6b4f7483d307bd96165c362087` for reproducible source-based tests.
-Before merge, replace that Git dependency with registry version `0.1.0`, regenerate
-`bun.lock`, remove the draft-only webpack extension alias and rerun every check
-below. The registry artifact contains compiled JavaScript and declarations.
+The app depends on one exact npm release of
+`@policyengine/microcosm-provider-orrery`, which PolicyEngine/microcosm-emitter
+publishes automatically on every merge to its `main`. The package contains
+compiled JavaScript and declarations, so the app needs no transpilation or
+resolver override for it. To adopt a new release, change the exact version,
+regenerate `bun.lock` and rerun every check below.
 
 No new environment variables, secrets, stores or endpoints are introduced by this
 migration. Existing provisioning remains unchanged. Provider contract and browser
