@@ -1,0 +1,1 @@
+Read and validate graph publications with the `@policyengine/microcosm-provider-orrery` package (0.2.1) instead of a copy of its contract and readers in this app. The viewer, routes and publication behaviour are unchanged.
