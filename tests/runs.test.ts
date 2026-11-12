@@ -61,7 +61,12 @@ function fakeCollector(
       const bytes = files[path];
       if (!bytes) return null;
       expect(sha256(bytes)).toBe(expectedSha256);
-      return { bytes, visibility: visibility(path) };
+      // Received in two parts, as a stream can arrive.
+      const middle = Math.floor(bytes.length / 2);
+      return {
+        parts: [bytes.subarray(0, middle), bytes.subarray(middle)],
+        visibility: visibility(path),
+      };
     },
   };
 }
@@ -81,9 +86,9 @@ test("with collector reads off, metadata and files come from the publication sto
     dependencies(null),
   );
   expect(metadata.status).toBe(200);
-  expect(metadata.headers.get("cache-control")).toBe(
-    "public, max-age=31536000, immutable",
-  );
+  // Not a year: the same URL answers from the collector once collector reads
+  // are turned on, and a browser must ask again by then.
+  expect(metadata.headers.get("cache-control")).toBe("public, max-age=300");
   expect(await metadata.json()).toEqual({
     ...blobPublication,
     source: "publication",

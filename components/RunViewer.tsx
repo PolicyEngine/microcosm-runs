@@ -6,7 +6,7 @@ import {
   type GraphDocument,
 } from "@axiom-foundation/orrery";
 import { Orrery } from "@axiom-foundation/orrery/react";
-import { loadDocument, SignInRequired } from "@/lib/viewer";
+import { loadDocument, runPagePath, SignInRequired } from "@/lib/viewer";
 import type { RunMetadata } from "@/lib/run-metadata";
 import Provenance from "./Provenance";
 
@@ -35,6 +35,15 @@ export default function RunViewer({ id }: { id: string }) {
   );
   const location = useMemo(() => decodeLocation(hash), [hash]);
   useEffect(() => {
+    // Put back the trailing slash Next.js may have redirected away, so that
+    // the graph's relative links resolve inside this run.
+    const { pathname, search, hash } = window.location;
+    if (runPagePath(pathname) !== pathname)
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${runPagePath(pathname)}${search}${hash}`,
+      );
     const controller = new AbortController();
     loadDocument(id, controller.signal, fetch, window.location.search)
       .then(setResult)

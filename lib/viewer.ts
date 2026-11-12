@@ -48,6 +48,18 @@ function graphSource(id: string, url: string): string | URL {
   return parsed;
 }
 
+/**
+ * The run page's path with its trailing slash. Next.js redirects
+ * `/runs/<id>/` to `/runs/<id>` when the ID ends like a file name (such as
+ * `.stage1`), and Orrery's relative `upstream-<sha256>.json` links would then
+ * resolve outside the run.
+ */
+export function runPagePath(pathname: string): string {
+  return pathname.endsWith("/") ? pathname : `${pathname}/`;
+}
+
+const SOURCES = new Set(["publication", "local", "collector"]);
+
 export async function loadDocument(
   id: string,
   signal: AbortSignal,
@@ -74,6 +86,16 @@ export async function loadDocument(
   if (!response.ok)
     throw new Error("Graph publication metadata is unavailable.");
   const metadata: RunMetadata = await response.json();
+  // Publication store metadata cached before sources were named has none.
+  (metadata as { source?: string }).source ??= "publication";
+  if (
+    !SOURCES.has(metadata.source) ||
+    (metadata.source === "collector" &&
+      (typeof metadata.document !== "object" ||
+        metadata.document === null ||
+        !Array.isArray(metadata.documents)))
+  )
+    throw new Error("Invalid graph publication metadata.");
   const file = metadata.files?.find(
     (f) => f.role === "graph" && f.name === "graph.orrery.json",
   );
