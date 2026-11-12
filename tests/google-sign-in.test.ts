@@ -276,6 +276,8 @@ test("the page to return to is always a path on this site", async () => {
     "/\\evil.example/",
     "javascript:alert(1)",
     "/.//evil.example/",
+    "/\t/evil.example/",
+    "/\n/evil.example/",
     "",
   ]) {
     const { location, signInCookie } = await started(next);
@@ -365,4 +367,23 @@ test("Google's keys being unreachable is an outage, not a refusal", async () => 
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: "sign_in_unavailable" });
   }
+});
+
+test("a mixed-case policyengine.org address signs in as its lowercase form", async () => {
+  const { location, signInCookie } = await started();
+  const token = await idToken({
+    nonce: location.searchParams.get("nonce") ?? "",
+    email: "Staff.Member@PolicyEngine.org",
+  });
+  const { fetcher } = tokenEndpoint(() => Response.json({ id_token: token }));
+  const response = await callback(
+    signInCookie,
+    location.searchParams.get("state") ?? "",
+    fetcher,
+  );
+  expect(response.status).toBe(303);
+  const session = cookiesOf(response).get(SESSION_COOKIE) ?? "";
+  expect(
+    await staffEmail(new Headers({ cookie: session.split(";", 1)[0] }), config),
+  ).toBe("staff.member@policyengine.org");
 });
