@@ -4,7 +4,11 @@ import {
   runId,
   type Publication,
 } from "./contract";
-import type { CollectorDocument, CollectorReader } from "./collector";
+import {
+  UPSTREAM_FILE_NAME,
+  type CollectorDocument,
+  type CollectorReader,
+} from "./collector";
 import { failure } from "./http";
 import type { createLocalPublications } from "./local";
 import {
@@ -33,9 +37,12 @@ export interface RunDependencies {
 
 const GRAPH_FILE_NAME = "graph.orrery.json";
 const SELECTION = /^sub-[0-9a-f]{32}\/[0-9a-f]{64}$/;
-const UPSTREAM_NAME = /^upstream-([0-9a-f]{64})\.json$/;
-/** Publication store records never change. */
-const IMMUTABLE = "public, max-age=31536000, immutable";
+/**
+ * Publication store records never change, but once collector reads are on,
+ * the same URL answers from the collector for a run it has documents for, so
+ * browsers keep a record only briefly.
+ */
+const PUBLICATION_METADATA_CACHE = "public, max-age=300";
 /**
  * A public collector file's bytes never change, but the collector can later
  * count it private (a licensed submission recorded afterwards), so browsers
@@ -43,7 +50,6 @@ const IMMUTABLE = "public, max-age=31536000, immutable";
  * keep it.
  */
 const COLLECTOR_FILE_CACHE = "public, max-age=300";
-const SENT_PART_BYTES = 1024 * 1024;
 
 function json(body: unknown, status: number, cacheControl: string): Response {
   return Response.json(body, {
@@ -98,18 +104,16 @@ function graphRoute(id: string, document: CollectorDocument): string {
   return `/runs/${encodeURIComponent(id)}/${GRAPH_FILE_NAME}?document=${encodeURIComponent(documentSelection(document))}`;
 }
 
-/** Send checked bytes in parts: Vercel limits unstreamed answers to 4.5 MB. */
-function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
-  let offset = 0;
+/**
+ * Send checked parts as a stream, as they were received: Vercel limits
+ * unstreamed answers to 4.5 MB.
+ */
+function streamOf(parts: Uint8Array[]): ReadableStream<Uint8Array> {
+  let index = 0;
   return new ReadableStream({
     pull(controller) {
-      if (offset >= bytes.length) {
-        controller.close();
-        return;
-      }
-      const end = Math.min(offset + SENT_PART_BYTES, bytes.length);
-      controller.enqueue(bytes.subarray(offset, end));
-      offset = end;
+      if (index >= parts.length) controller.close();
+      else controller.enqueue(parts[index++]);
     },
   });
 }
@@ -139,7 +143,11 @@ export async function runMetadataResponse(
     if (!dependencies.collector) {
       const result = await dependencies.publications.read(id);
       return result
-        ? json({ ...result, source: "publication" }, 200, IMMUTABLE)
+        ? json(
+            { ...result, source: "publication" },
+            200,
+            PUBLICATION_METADATA_CACHE,
+          )
         : notFound();
     }
     const documents = await dependencies.collector.list(runId(id));
@@ -225,7 +233,7 @@ export async function runFileResponse(
           maximum: document.document_bytes,
         };
     } else {
-      const upstreamSha256 = UPSTREAM_NAME.exec(name)?.[1];
+      const upstreamSha256 = UPSTREAM_FILE_NAME.exec(name)?.[1];
       const selected = selection === null ? null : chosen(shown, selection);
       const ordered = selected
         ? [selected, ...shown.filter((document) => document !== selected)]
@@ -249,7 +257,7 @@ export async function runFileResponse(
     // The read service computes visibility on every answer; a document that
     // has become private since it was listed is not served.
     if (!file || file.visibility !== "public") return notFound();
-    return new Response(streamOf(Buffer.concat(file.parts)), {
+    return new Response(streamOf(file.parts), {
       status: 200,
       headers: {
         "Content-Type": "application/json",

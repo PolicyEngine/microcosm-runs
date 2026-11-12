@@ -93,8 +93,11 @@ set to `collector`, this app reads from it first:
   documents. Run IDs follow the collector's rule, so they may also hold `.`
   and `:`. If the read service has no document for the ID, the publication
   store answers as it does without the setting, so older publications stay
-  readable. If the read service has documents but answers with an error, the
-  answer is a 503, never the publication store's.
+  readable. If it has documents, it alone answers, even when none of them
+  may be shown. If it answers with an error, the answer is a 503, never the
+  publication store's. Next.js redirects `/runs/<id>/` to `/runs/<id>` when
+  the ID ends like a file name (`.stage1`); the viewer puts the trailing
+  slash back in the address, so the graph's relative links stay in the run.
 - **Which document.** The run's newest document is shown;
   `?document=<submission_id>/<document_sha256>` shows another of the run's
   documents, and the provenance panel lists them all with their dates.
@@ -110,20 +113,22 @@ set to `collector`, this app reads from it first:
   listed or served. A run whose documents are all private is not found until
   staff sign-in exists (tracker 4b · 3). Each served file is checked again:
   one the read service now marks `private` is not served.
-- **Checks.** The server reads each file whole, at most the listed size for
-  a document and 64 MiB for an upstream file, and sends it only if the
+- **Checks.** The server reads each file whole, keeping the parts as they
+  arrive and hashing them on the way, at most the listed size for a document
+  and 64 MiB for an upstream file, and sends it only if the
   SHA-256 of the body equals both the `ETag` and the listed document SHA-256
   (or the SHA-256 in an upstream file's name). The read service sends its
   200 before its second read of the file, and a failed second read ends the
   body early, so nothing is trusted before the whole body has matched. The
   browser checks the graph's size and SHA-256 again.
 - **Files and caching.** `/runs/{run_id}/graph.orrery.json?document=…` and
-  `/runs/{run_id}/upstream-<sha256>.json` serve the checked bytes in 1 MiB
-  parts: Vercel Functions refuse an unstreamed answer over 4.5 MB, but not a
-  streamed one. Files are sent with `Cache-Control: public, max-age=300` and
+  `/runs/{run_id}/upstream-<sha256>.json` stream the checked parts: Vercel
+  Functions refuse an unstreamed answer over 4.5 MB, but not a streamed one. Files are sent with `Cache-Control: public, max-age=300` and
   no `s-maxage`, because the collector can later count a document private
   when a licensed submission with its run or build ID is recorded. Metadata
-  is `no-store` while the setting is on. Evidence files stay in the
+  is `no-store` while the setting is on. Without it, publication store
+  metadata is sent with `public, max-age=300`, not as immutable for a year,
+  because the same URL answers from the collector once the setting is on. Evidence files stay in the
   collector's private storage, and documents carry no links to them.
 
 **How this app calls the read service, without a stored key.** On each

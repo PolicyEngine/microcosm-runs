@@ -54,10 +54,16 @@ export function runId(value: unknown): string {
     throw new ApiError(400, "invalid_run_id");
   return value;
 }
-/** The run ID a page receives; red-phase stub: not decoded yet. */
+/**
+ * The run ID of a page's `[id]` param, or null for an invalid one. Next.js 16
+ * passes page params URL-encoded (`getParamValue` applies
+ * `encodeURIComponent`), unlike route handlers' params, so a run ID with `:`
+ * arrives as `%3A`. Run IDs hold no `%`, so decoding an already decoded ID
+ * changes nothing.
+ */
 export function runIdFromPage(value: string): string | null {
   try {
-    return runId(value);
+    return runId(decodeURIComponent(value));
   } catch {
     return null;
   }

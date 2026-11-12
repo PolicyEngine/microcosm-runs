@@ -1,4 +1,5 @@
-import { ApiError, MAX_FILE_BYTES, sha256 } from "./contract";
+import { createHash } from "node:crypto";
+import { ApiError, MAX_FILE_BYTES } from "./contract";
 import type { Fetcher } from "./net";
 
 /**
@@ -57,7 +58,8 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const SUBMISSION_ID = /^sub-[0-9a-f]{32}$/;
 const FILE_PATH =
   /^\/v1\/orrery-graphs\/sub-[0-9a-f]{32}\/[0-9a-f]{64}\/(?:graph\.orrery\.json|upstream-[0-9a-f]{64}\.json)$/;
-const UPSTREAM_NAME = /^upstream-[0-9a-f]{64}\.json$/;
+/** An upstream file's name; its capture is the file's SHA-256. */
+export const UPSTREAM_FILE_NAME = /^upstream-([0-9a-f]{64})\.json$/;
 const BUILD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const COUNTRY_CODE = /^[A-Z]{2}$/;
 const TIMESTAMP =
@@ -151,7 +153,7 @@ function listedDocument(raw: unknown, runId: string): CollectorDocument {
       (path) =>
         typeof path === "string" &&
         path.startsWith(folder) &&
-        UPSTREAM_NAME.test(path.slice(folder.length)),
+        UPSTREAM_FILE_NAME.test(path.slice(folder.length)),
     )
   )
     throw invalid();
@@ -174,14 +176,19 @@ function listedDocument(raw: unknown, runId: string): CollectorDocument {
   };
 }
 
-/** Read a body, refusing it once it passes `maximum` bytes. */
-async function bodyBytes(
+/**
+ * Read a body as the parts it arrives in, hashing them on the way, and refuse
+ * it once it passes `maximum` bytes. The parts are kept as they are, so a
+ * file is held once, not copied into a second whole buffer.
+ */
+async function bodyParts(
   response: Response,
   maximum: number,
-): Promise<Uint8Array> {
+): Promise<{ parts: Uint8Array[]; sha256: string }> {
+  const digest = createHash("sha256");
   const reader = response.body?.getReader();
-  if (!reader) return new Uint8Array(0);
-  const chunks: Uint8Array[] = [];
+  if (!reader) return { parts: [], sha256: digest.digest("hex") };
+  const parts: Uint8Array[] = [];
   let length = 0;
   try {
     while (true) {
@@ -194,18 +201,13 @@ async function bodyBytes(
       if (part.done) break;
       length += part.value.byteLength;
       if (length > maximum) throw invalid();
-      chunks.push(part.value);
+      digest.update(part.value);
+      parts.push(part.value);
     }
   } finally {
     await reader.cancel().catch(() => undefined);
   }
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
+  return { parts, sha256: digest.digest("hex") };
 }
 
 /** The SHA-256 a strong or weak `ETag` of the read service carries. */
@@ -246,11 +248,13 @@ export function createCollectorReader(
         await response.body?.cancel().catch(() => undefined);
         throw unavailable();
       }
-      const bytes = await bodyBytes(response, MAX_LISTING_BYTES);
+      const { parts } = await bodyParts(response, MAX_LISTING_BYTES);
       let data: unknown;
       try {
         data = JSON.parse(
-          new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+          new TextDecoder("utf-8", { fatal: true }).decode(
+            Buffer.concat(parts),
+          ),
         );
       } catch {
         throw invalid();
@@ -287,10 +291,9 @@ export function createCollectorReader(
       }
       // A second read that fails after the read service has sent its 200
       // ends the body early, so the whole body is checked before use.
-      const bytes = await bodyBytes(response, maximumBytes);
-      if (sha256(bytes) !== expectedSha256) throw invalid();
-      // Red-phase stub: still one whole copy.
-      return { parts: [bytes], visibility };
+      const body = await bodyParts(response, maximumBytes);
+      if (body.sha256 !== expectedSha256) throw invalid();
+      return { parts: body.parts, visibility };
     },
   };
 }
