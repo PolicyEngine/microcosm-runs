@@ -61,7 +61,12 @@ export function runId(value: unknown): string {
  * arrives as `%3A`. Run IDs hold no `%`, so decoding an already decoded ID
  * changes nothing.
  */
-export function runIdFromPage(value: string): string | null {
+export function runIdFromPage(
+  value: string,
+  // Red-phase stub: not read yet.
+  collectorReads = true,
+): string | null {
+  void collectorReads;
   try {
     return runId(decodeURIComponent(value));
   } catch {
