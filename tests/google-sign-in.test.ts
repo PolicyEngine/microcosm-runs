@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   SignJWT,
   createLocalJWKSet,
+  errors,
   exportJWK,
   generateKeyPair,
   type JWTPayload,
@@ -64,15 +65,18 @@ async function started(next = "/runs/run-1/?document=x") {
   );
   expect(response.status).toBe(302);
   const location = new URL(response.headers.get("location") ?? "");
-  const signInCookie = cookiesOf(response).get(SIGN_IN_COOKIE) ?? "";
+  // Each sign-in has its own cookie, named after its state.
+  const state = location.searchParams.get("state") ?? "";
+  const signInCookie =
+    cookiesOf(response).get(`${SIGN_IN_COOKIE}-${state}`) ?? "";
   return { response, location, signInCookie };
 }
 
 async function idToken(
   claims: JWTPayload,
-  options: { key?: CryptoKey; expiresIn?: string } = {},
+  options: { key?: CryptoKey; expiresIn?: string | null } = {},
 ) {
-  return new SignJWT({
+  const token = new SignJWT({
     iss: "https://accounts.google.com",
     aud: config.clientId,
     email: "staff@policyengine.org",
@@ -81,9 +85,11 @@ async function idToken(
     ...claims,
   })
     .setProtectedHeader({ alg: "RS256", kid: "google-key" })
-    .setIssuedAt()
-    .setExpirationTime(options.expiresIn ?? "1h")
-    .sign(options.key ?? googleKeys.privateKey);
+    .setIssuedAt();
+  // `expiresIn: null` leaves the expiry out altogether.
+  if (options.expiresIn !== null)
+    token.setExpirationTime(options.expiresIn ?? "1h");
+  return token.sign(options.key ?? googleKeys.privateKey);
 }
 
 function tokenEndpoint(answer: (body: URLSearchParams) => Response) {
@@ -176,7 +182,7 @@ test("a valid callback exchanges the code with the PKCE verifier, checks the ID 
     await staffEmail(new Headers({ cookie: session.split(";", 1)[0] }), config),
   ).toBe("staff@policyengine.org");
   // The one-time sign-in cookie is removed.
-  expect(cookies.get(SIGN_IN_COOKIE)).toContain("Max-Age=0");
+  expect(cookies.get(`${SIGN_IN_COOKIE}-${state}`)).toContain("Max-Age=0");
 });
 
 test("an ID token that is not a verified policyengine.org account for this client is refused", async () => {
@@ -206,6 +212,7 @@ test("an ID token that is not a verified policyengine.org account for this clien
     ],
     ["wrong nonce", () => idToken({ nonce: "x".repeat(43) })],
     ["expired", (nonce) => idToken({ nonce }, { expiresIn: "-1m" })],
+    ["no expiry", (nonce) => idToken({ nonce }, { expiresIn: null })],
     [
       "another signing key",
       (nonce) => idToken({ nonce }, { key: other.privateKey as CryptoKey }),
@@ -268,6 +275,7 @@ test("the page to return to is always a path on this site", async () => {
     "//evil.example/",
     "/\\evil.example/",
     "javascript:alert(1)",
+    "/.//evil.example/",
     "",
   ]) {
     const { location, signInCookie } = await started(next);
@@ -300,4 +308,61 @@ test("signing out removes the session; a cross-site request cannot", async () =>
   );
   expect(crossSite.status).toBe(403);
   expect(cookiesOf(crossSite).has(SESSION_COOKIE)).toBe(false);
+});
+
+test("two sign-ins started in one browser both complete", async () => {
+  const first = await started("/runs/first/");
+  const second = await started("/runs/second/");
+  // The browser keeps both cookies: they have different names.
+  const jar = [first.signInCookie, second.signInCookie]
+    .map((value) => value.split(";", 1)[0])
+    .join("; ");
+  for (const [sign, back] of [
+    [first, "/runs/first/"],
+    [second, "/runs/second/"],
+  ] as const) {
+    const token = await idToken({
+      nonce: sign.location.searchParams.get("nonce") ?? "",
+    });
+    const { fetcher } = tokenEndpoint(() => Response.json({ id_token: token }));
+    const response = await signInCallback(
+      new Request(
+        `${callbackUrl}?code=auth-code&state=${sign.location.searchParams.get("state")}`,
+        { headers: { cookie: jar } },
+      ),
+      config,
+      { fetcher, keys: googleKeys.keys },
+    );
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(`${origin}${back}`);
+    expect(cookiesOf(response).has(SESSION_COOKIE)).toBe(true);
+  }
+});
+
+test("Google's keys being unreachable is an outage, not a refusal", async () => {
+  for (const failure of [
+    new errors.JWKSTimeout(),
+    new TypeError("fetch failed"),
+  ]) {
+    const { location, signInCookie } = await started();
+    const token = await idToken({
+      nonce: location.searchParams.get("nonce") ?? "",
+    });
+    const { fetcher } = tokenEndpoint(() => Response.json({ id_token: token }));
+    const response = await signInCallback(
+      new Request(
+        `${callbackUrl}?code=auth-code&state=${location.searchParams.get("state")}`,
+        { headers: { cookie: signInCookie.split(";", 1)[0] } },
+      ),
+      config,
+      {
+        fetcher,
+        keys: async () => {
+          throw failure;
+        },
+      },
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "sign_in_unavailable" });
+  }
 });

@@ -478,7 +478,26 @@ test("everyone else is asked to sign in for a licensed run, and is sent nothing 
     dependencies(collector),
     anonymous,
   );
-  expect(file.status).toBe(404);
+  // A direct link to a licensed file asks for sign-in too.
+  expect(file.status).toBe(401);
+  expect(await file.json()).toEqual({ error: "sign_in_required" });
+  expect(file.headers.get("cache-control")).toBe("no-store");
+  const newest = await runFileResponse(
+    "run-1",
+    "graph.orrery.json",
+    search(),
+    dependencies(collector),
+    anonymous,
+  );
+  expect(newest.status).toBe(401);
+  const withoutSignIn = await runFileResponse(
+    "run-1",
+    "graph.orrery.json",
+    search(),
+    dependencies(collector),
+    { staffEmail: null, signInAvailable: false },
+  );
+  expect(withoutSignIn.status).toBe(404);
   expect(collector.fetched).toEqual([]);
 });
 

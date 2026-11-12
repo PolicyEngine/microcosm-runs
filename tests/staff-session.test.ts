@@ -6,6 +6,7 @@ import {
   SESSION_COOKIE,
   SESSION_SECRET_ENV,
   createSessionCookie,
+  createSignInCookie,
   signInConfig,
   staffEmail,
 } from "../lib/staff-session";
@@ -128,4 +129,18 @@ test("a tampered, foreign or missing session cookie is no session", async () => 
   expect(await staffEmail(cookieHeader(cookie), config)).toBe(
     "staff@policyengine.org",
   );
+});
+
+test("a sign-in cookie cannot stand in for a session", async () => {
+  const pending = await createSignInCookie(
+    { state: "s".repeat(43), nonce: "n", verifier: "v", next: "/" },
+    config,
+  );
+  const value = pending.split(";", 1)[0].split("=").slice(1).join("=");
+  expect(
+    await staffEmail(
+      new Headers({ cookie: `${SESSION_COOKIE}=${value}` }),
+      config,
+    ),
+  ).toBeNull();
 });
