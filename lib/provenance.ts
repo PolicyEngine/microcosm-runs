@@ -89,3 +89,14 @@ export function documentChoices(metadata: RunMetadata): DocumentChoice[] {
     reconstructed: document.reconstructed,
   }));
 }
+
+/** The sign-in or signed-in account the viewer shows, or null without sign-in. */
+export function staffAccess(
+  metadata: RunMetadata,
+  path: string,
+): { signedInAs: string | null; signInHref: string | null } | null {
+  // Red-phase stub: replaced by the implementation.
+  void metadata;
+  void path;
+  return null;
+}

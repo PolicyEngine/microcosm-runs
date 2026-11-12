@@ -22,6 +22,12 @@ export interface PublicationReader {
   read(id: string): Promise<Publication | null>;
   evidence(id: string, name: string): Promise<string | null>;
 }
+/** Whether the request comes from signed-in staff, from the session cookie. */
+export interface RequestAccess {
+  staffEmail: string | null;
+  signInAvailable: boolean;
+}
+const NO_ACCESS: RequestAccess = { staffEmail: null, signInAvailable: false };
 export interface RunDependencies {
   /** A development directory of preserved publications, read instead of anything else. */
   local: ReturnType<typeof createLocalPublications> | null;
@@ -128,7 +134,10 @@ export async function runMetadataResponse(
   id: string,
   search: URLSearchParams,
   dependencies: RunDependencies,
+  // Red-phase stub: not read yet.
+  access: RequestAccess = NO_ACCESS,
 ): Promise<Response> {
+  void access;
   try {
     if (dependencies.local) {
       const result = await dependencies.local.read(id);
@@ -156,6 +165,7 @@ export async function runMetadataResponse(
     if (!document) return notFound();
     const metadata: CollectorRunMetadata = {
       source: "collector",
+      viewer: { signed_in_as: null, sign_in_available: false },
       publication_id: id,
       document: provenance(document),
       documents: shown.map(provenance),
@@ -189,7 +199,10 @@ export async function runFileResponse(
   name: string,
   search: URLSearchParams,
   dependencies: RunDependencies,
+  // Red-phase stub: not read yet.
+  access: RequestAccess = NO_ACCESS,
 ): Promise<Response> {
+  void access;
   try {
     if (dependencies.local) {
       const bytes = await dependencies.local.file(id, name);

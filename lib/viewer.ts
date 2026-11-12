@@ -4,6 +4,14 @@ import type { RunMetadata } from "./run-metadata";
 
 const invalidLocation = () => new Error("Invalid graph storage URL.");
 
+/** A licensed run: only signed-in staff may view it. */
+export class SignInRequired extends Error {
+  // Red-phase stub: never thrown yet.
+  constructor(public signInHref: string) {
+    super("Sign in with a policyengine.org Google account to view this run.");
+  }
+}
+
 /**
  * Where the graph may be fetched from: this app's own route for the run
  * (a local development file, or a collector document named by its
