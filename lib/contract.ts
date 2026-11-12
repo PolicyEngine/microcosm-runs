@@ -63,12 +63,12 @@ export function runId(value: unknown): string {
  */
 export function runIdFromPage(
   value: string,
-  // Red-phase stub: not read yet.
-  collectorReads = true,
+  /** Whether collector reads are on; without them only publication IDs open. */
+  collectorReads: boolean,
 ): string | null {
-  void collectorReads;
   try {
-    return runId(decodeURIComponent(value));
+    const id = decodeURIComponent(value);
+    return collectorReads ? runId(id) : publicationId(id);
   } catch {
     return null;
   }
