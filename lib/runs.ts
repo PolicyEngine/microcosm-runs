@@ -143,6 +143,42 @@ function streamOf(parts: Uint8Array[]): ReadableStream<Uint8Array> {
 }
 
 /**
+ * Which collector file `/runs/{id}/{name}` names among these documents:
+ * `graph.orrery.json` of the selected (or newest) document, or an
+ * `upstream-<sha256>.json` file one of them links to, the selected one's
+ * first.
+ */
+function fileTarget(
+  documents: CollectorDocument[],
+  name: string,
+  selection: string | null,
+): { path: string; sha256: string; maximum: number } | null {
+  if (name === GRAPH_FILE_NAME) {
+    const document = chosen(documents, selection);
+    return document
+      ? {
+          path: document.document_path,
+          sha256: document.document_sha256,
+          maximum: document.document_bytes,
+        }
+      : null;
+  }
+  const upstreamSha256 = UPSTREAM_FILE_NAME.exec(name)?.[1];
+  if (!upstreamSha256) return null;
+  const selected = selection === null ? null : chosen(documents, selection);
+  const ordered = selected
+    ? [selected, ...documents.filter((document) => document !== selected)]
+    : documents;
+  for (const document of ordered) {
+    const path = document.upstream_paths.find((candidate) =>
+      candidate.endsWith(`/${name}`),
+    );
+    if (path) return { path, sha256: upstreamSha256, maximum: MAX_FILE_BYTES };
+  }
+  return null;
+}
+
+/**
  * `GET /api/runs/{id}/`: a run's or publication's metadata.
  *
  * - A local development directory, when configured, answers alone.
@@ -259,34 +295,11 @@ export async function runFileResponse(
         : null;
       return url ? Response.redirect(url, 307) : notFound();
     }
-    const shown = viewable(documents, access);
     const selection = search.get("document");
-    let target: { path: string; sha256: string; maximum: number } | null = null;
-    if (name === GRAPH_FILE_NAME) {
-      const document = chosen(shown, selection);
-      if (document)
-        target = {
-          path: document.document_path,
-          sha256: document.document_sha256,
-          maximum: document.document_bytes,
-        };
-    } else {
-      const upstreamSha256 = UPSTREAM_FILE_NAME.exec(name)?.[1];
-      const selected = selection === null ? null : chosen(shown, selection);
-      const ordered = selected
-        ? [selected, ...shown.filter((document) => document !== selected)]
-        : shown;
-      for (const document of upstreamSha256 ? ordered : []) {
-        const path = document.upstream_paths.find((candidate) =>
-          candidate.endsWith(`/${name}`),
-        );
-        if (path && upstreamSha256) {
-          target = { path, sha256: upstreamSha256, maximum: MAX_FILE_BYTES };
-          break;
-        }
-      }
-    }
-    if (!target) return notFound();
+    const target = fileTarget(viewable(documents, access), name, selection);
+    // Asked of a file only private documents hold: sign in, if offered.
+    if (!target)
+      return hidden(access, fileTarget(documents, name, selection) !== null);
     const file = await dependencies.collector.file(
       target.path,
       target.sha256,

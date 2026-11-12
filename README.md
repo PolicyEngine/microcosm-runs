@@ -131,8 +131,9 @@ set to `collector`, this app reads from it first:
   Public files are sent with `Cache-Control: public, max-age=300` and no
   `s-maxage`, because the collector can later count a document private when
   a licensed submission with its run or build ID is recorded. Private files,
-  and metadata for signed-in staff, are sent with `Cache-Control: private,
-no-store`, so no browser or shared cache keeps them. Other metadata is
+  and metadata for signed-in staff, are sent with
+  `Cache-Control: private, no-store`, so no browser or shared cache keeps
+  them. Other metadata is
   `no-store` while the setting is on. Without it, publication store metadata
   is sent with `public, max-age=300`, not as immutable for a year, because
   the same URL answers from the collector once the setting is on. Evidence
@@ -177,15 +178,21 @@ sends to the browser: the collector never sees the person's identity.
   the person to Google with an authorization code request with PKCE (S256), a
   random state and nonce, the scopes `openid email`, and `hd=policyengine.org`
   as a hint. The state, nonce and PKCE verifier wait in a signed, ten-minute,
-  host-only cookie (`__Host-microcosm-runs-sign-in`).
+  host-only cookie named after the state
+  (`__Host-microcosm-runs-sign-in-<state>`), so two sign-ins in one browser
+  don't replace each other.
 - **Coming back.** `/api/auth/google/callback/` requires the state to match
   that cookie, exchanges the code with the client secret and the PKCE
   verifier, and checks the ID token against Google's published keys. It must
   be issued by Google for this OAuth client, unexpired, carry the sign-in's
   nonce, and name a verified address on exactly `policyengine.org` (not a
-  subdomain), with the `hd` claim saying `policyengine.org`. The OAuth
-  client's internal consent screen already limits sign-in to the
-  organization's accounts; these checks don't rely on it. The person then
+  subdomain), with the `hd` claim saying `policyengine.org`. Tracker 4b · 2
+  gives the OAuth client an internal consent screen, which limits sign-in to
+  the organization's accounts; these checks don't rely on it. An ID token
+  that can't be checked because Google's keys don't answer is a 502, not a
+  refusal. The `hd` claim names the account's Google Workspace domain, so
+  this assumes policyengine.org is that Workspace's primary domain; a real
+  sign-in is the first check of it. The person then
   returns to the page they came from, which must be a path on this site.
 - **The session.** An eight-hour `__Host-microcosm-runs-session` cookie
   (`HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`) holds the address,
@@ -194,8 +201,9 @@ sends to the browser: the collector never sees the person's identity.
   refuses requests from other sites. Changing the session secret ends every
   session.
 - **What staff get.** Their metadata lists the run's private documents too,
-  and private files are sent to them with `Cache-Control: private,
-no-store` and `Vary: Cookie`. Public files keep their public caching,
+  and private files are sent to them with
+  `Cache-Control: private, no-store` and `Vary: Cookie`. Public files keep
+  their public caching,
   since their bytes are the same for everyone.
 
 | Setting                         | Value                                                            | Where the value lives                                                                                                  |

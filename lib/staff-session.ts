@@ -12,8 +12,19 @@ export const SESSION_SECRET_ENV = "MICROCOSM_RUNS_SESSION_SECRET";
  * `Path=/` and no `Domain`, so no other host can set or read it.
  */
 export const SESSION_COOKIE = "__Host-microcosm-runs-session";
-/** Holds one sign-in's state, nonce and PKCE verifier for ten minutes. */
+/**
+ * The prefix of a sign-in's cookie, which holds its state, nonce and PKCE
+ * verifier for ten minutes. Each sign-in's cookie is named after its state,
+ * so two sign-ins in one browser don't replace each other's.
+ */
 export const SIGN_IN_COOKIE = "__Host-microcosm-runs-sign-in";
+/** A state as `signInStart` makes one: 32 random bytes in base64url. */
+export const SIGN_IN_STATE = /^[A-Za-z0-9_-]{43}$/;
+
+/** The cookie of the sign-in with this state. */
+export function signInCookieName(state: string): string {
+  return `${SIGN_IN_COOKIE}-${state}`;
+}
 /** Only accounts of this Google Workspace domain are staff. */
 export const STAFF_DOMAIN = "policyengine.org";
 
@@ -174,23 +185,26 @@ export async function createSignInCookie(
     config,
     now,
   );
-  return cookie(SIGN_IN_COOKIE, token, SIGN_IN_SECONDS);
+  return cookie(signInCookieName(state), token, SIGN_IN_SECONDS);
 }
 
+/** The pending sign-in with this state, or null. */
 export async function readSignInCookie(
   headers: Headers,
+  state: string,
   config: SignInConfig,
   now: number = Date.now(),
 ): Promise<PendingSignIn | null> {
+  if (!SIGN_IN_STATE.test(state)) return null;
   const payload = await verified(
-    cookieValue(headers, SIGN_IN_COOKIE),
+    cookieValue(headers, signInCookieName(state)),
     SIGN_IN_AUDIENCE,
     config,
     now,
   );
   if (
     !payload ||
-    typeof payload.sub !== "string" ||
+    payload.sub !== state ||
     typeof payload.nonce !== "string" ||
     typeof payload.verifier !== "string" ||
     typeof payload.next !== "string"

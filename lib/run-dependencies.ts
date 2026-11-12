@@ -40,6 +40,8 @@ export function runDependencies(
   };
 }
 
+let signInSettingsReported = false;
+
 /**
  * Whether the request comes from signed-in staff. Sign-in settings that are
  * missing or malformed mean nobody is staff; public runs stay readable.
@@ -52,6 +54,13 @@ export async function requestAccess(
   try {
     config = signInConfig(environment);
   } catch {
+    // Said once per instance, without the values, so the cause is findable.
+    if (!signInSettingsReported) {
+      signInSettingsReported = true;
+      console.error(
+        "Staff sign-in is off: its settings are incomplete or malformed.",
+      );
+    }
     config = null;
   }
   if (!config) return { staffEmail: null, signInAvailable: false };

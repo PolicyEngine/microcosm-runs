@@ -1,15 +1,20 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
+import {
+  createRemoteJWKSet,
+  errors,
+  jwtVerify,
+  type JWTVerifyGetKey,
+} from "jose";
 import type { Fetcher } from "./net";
 import {
   SESSION_COOKIE,
-  SIGN_IN_COOKIE,
   STAFF_DOMAIN,
   clearedCookie,
   createSessionCookie,
   createSignInCookie,
   isStaffAddress,
   readSignInCookie,
+  signInCookieName,
   type SignInConfig,
 } from "./staff-session";
 
@@ -28,6 +33,22 @@ const googleKeys = createRemoteJWKSet(new URL(GOOGLE_KEYS_URL));
 
 const randomToken = () => randomBytes(32).toString("base64url");
 
+/**
+ * jose's errors that mean the ID token itself is not acceptable. Any other
+ * failure, such as Google's keys not answering, is an outage.
+ */
+const TOKEN_REFUSALS = [
+  errors.JWTClaimValidationFailed,
+  errors.JWTExpired,
+  errors.JWTInvalid,
+  errors.JWSInvalid,
+  errors.JWSSignatureVerificationFailed,
+  errors.JOSEAlgNotAllowed,
+  errors.JOSENotSupported,
+  errors.JWKSNoMatchingKey,
+  errors.JWKSMultipleMatchingKeys,
+];
+
 /** A path on this site to return to; anything else becomes `/`. */
 export function safeReturnPath(value: string | null): string {
   if (!value || value.length > 2048 || !value.startsWith("/")) return "/";
@@ -41,7 +62,10 @@ export function safeReturnPath(value: string | null): string {
   // The URL parser drops tabs and line breaks and reads `\` as `/`, so
   // `/\evil.example` or `/<tab>/evil.example` reach another origin here.
   if (parsed.origin !== base) return "/";
-  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  // `/.//host` resolves to the path `//host`, which on its own would name
+  // another host.
+  return path.startsWith("//") ? "/" : path;
 }
 
 function answer(
@@ -125,11 +149,11 @@ export async function signInCallback(
   const keys = dependencies.keys ?? googleKeys;
   const now = dependencies.now ?? Date.now;
   const url = new URL(request.url);
-  const cleared = clearedCookie(SIGN_IN_COOKIE);
-  const pending = await readSignInCookie(request.headers, config, now());
-  const state = url.searchParams.get("state");
-  if (!pending || !state || state !== pending.state)
-    return answer(400, { error: "invalid_sign_in_state" }, [cleared]);
+  const state = url.searchParams.get("state") ?? "";
+  const pending = await readSignInCookie(request.headers, state, config, now());
+  // Another sign-in's cookie, under another name, is left alone.
+  if (!pending) return answer(400, { error: "invalid_sign_in_state" });
+  const cleared = clearedCookie(signInCookieName(state));
   const back = `${url.origin}${safeReturnPath(pending.next)}`;
   // Cancelled or refused at Google: go back without a session.
   if (url.searchParams.has("error")) return answer(303, null, [cleared], back);
@@ -169,10 +193,13 @@ export async function signInCallback(
       algorithms: ["RS256"],
       issuer: GOOGLE_ISSUERS,
       audience: config.clientId,
+      requiredClaims: ["exp", "iat"],
       currentDate: new Date(now()),
     }));
-  } catch {
-    return refused();
+  } catch (error) {
+    return TOKEN_REFUSALS.some((refusal) => error instanceof refusal)
+      ? refused()
+      : answer(502, { error: "sign_in_unavailable" }, [cleared]);
   }
   const email =
     typeof claims.email === "string" ? claims.email.toLowerCase() : null;
