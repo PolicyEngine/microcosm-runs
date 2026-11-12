@@ -249,7 +249,7 @@ export async function runFileResponse(
     // The read service computes visibility on every answer; a document that
     // has become private since it was listed is not served.
     if (!file || file.visibility !== "public") return notFound();
-    return new Response(streamOf(file.bytes), {
+    return new Response(streamOf(Buffer.concat(file.parts)), {
       status: 200,
       headers: {
         "Content-Type": "application/json",

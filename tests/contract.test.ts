@@ -3,6 +3,7 @@ import {
   inventory,
   inventoryDigest,
   objectPath,
+  runIdFromPage,
   MAX_FILE_BYTES,
 } from "../lib/contract";
 
@@ -44,4 +45,15 @@ describe("publication inventory", () => {
   ])
     test(`rejects ${JSON.stringify(value).slice(0, 100)}`, () =>
       expect(() => inventory(value)).toThrow());
+});
+
+test("the run page decodes the ID Next.js passes it, URL-encoded, before checking it", () => {
+  // Next.js 16 applies encodeURIComponent to page params (getParamValue).
+  expect(runIdFromPage(encodeURIComponent("uk-build.stage:1"))).toBe(
+    "uk-build.stage:1",
+  );
+  expect(runIdFromPage("run-1")).toBe("run-1");
+  expect(runIdFromPage("uk-build.stage:1")).toBe("uk-build.stage:1");
+  for (const bad of ["%E0%A4%A", encodeURIComponent("../etc"), "a%2Fb", ""])
+    expect(runIdFromPage(bad)).toBeNull();
 });

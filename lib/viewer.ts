@@ -41,6 +41,11 @@ function graphSource(id: string, url: string): string | URL {
   return parsed;
 }
 
+/** Red-phase stub: returns the path unchanged. */
+export function runPagePath(pathname: string): string {
+  return pathname;
+}
+
 export async function loadDocument(
   id: string,
   signal: AbortSignal,

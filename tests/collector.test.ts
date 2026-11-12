@@ -158,7 +158,8 @@ test("a fetched file is returned only when its body matches the ETag and the exp
     });
   const { calls, fetcher } = recordingFetcher(() => served(bytes));
   const result = await reader(fetcher).file(path, digest, bytes.length);
-  expect(result && Buffer.from(result.bytes).toString()).toBe(
+  // The parts as received, without a second whole copy.
+  expect(result && Buffer.concat(result.parts).toString()).toBe(
     Buffer.from(bytes).toString(),
   );
   expect(result?.visibility).toBe("public");

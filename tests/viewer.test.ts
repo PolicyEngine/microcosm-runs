@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { encodeLocation, decodeLocation } from "@axiom-foundation/orrery";
-import { loadDocument } from "../lib/viewer";
+import { loadDocument, runPagePath } from "../lib/viewer";
 import type { Fetcher } from "../lib/net";
 import { sha256 } from "../lib/contract";
 const document = {
@@ -185,4 +185,40 @@ test("viewer refuses collector graph routes of another run or with other query p
       loadDocument("run-1", new AbortController().signal, fetcher),
     ).rejects.toThrow("Invalid graph storage URL.");
   }
+});
+
+test("the run page keeps its trailing slash, so relative upstream links stay inside the run", () => {
+  // Next.js redirects /runs/<id>/ to /runs/<id> when the ID ends like a file
+  // name, such as `.stage1`.
+  expect(runPagePath("/runs/uk-build.stage1")).toBe("/runs/uk-build.stage1/");
+  expect(runPagePath("/runs/run-1/")).toBe("/runs/run-1/");
+});
+
+test("metadata without a source is a publication store record, and collector metadata must name its document", async () => {
+  const bytes = JSON.stringify(document);
+  const file = {
+    name: "graph.orrery.json",
+    role: "graph",
+    bytes: new TextEncoder().encode(bytes).length,
+    sha256: sha256(bytes),
+    url: "https://example.public.blob.vercel-storage.com/graph.json",
+  };
+  let call = 0;
+  const older = await loadDocument(
+    "graph",
+    new AbortController().signal,
+    (async () =>
+      ++call === 1
+        ? Response.json({ publication_id: "graph", files: [file] })
+        : new Response(bytes)) as Fetcher,
+  );
+  expect(older.metadata.source).toBe("publication");
+  for (const metadata of [
+    { source: "collector", publication_id: "graph", files: [file] },
+    { source: "other", publication_id: "graph", files: [file] },
+  ])
+    await expect(
+      loadDocument("graph", new AbortController().signal, (async () =>
+        Response.json(metadata)) as Fetcher),
+    ).rejects.toThrow("Invalid graph publication metadata.");
 });

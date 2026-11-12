@@ -54,6 +54,14 @@ export function runId(value: unknown): string {
     throw new ApiError(400, "invalid_run_id");
   return value;
 }
+/** The run ID a page receives; red-phase stub: not decoded yet. */
+export function runIdFromPage(value: string): string | null {
+  try {
+    return runId(value);
+  } catch {
+    return null;
+  }
+}
 const roleNames: Record<FileRole, RegExp> = {
   graph: /^graph\.orrery\.json$/,
   schema: /^graph\.schema\.json$/,

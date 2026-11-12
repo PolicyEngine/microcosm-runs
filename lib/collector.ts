@@ -49,7 +49,7 @@ export interface CollectorReader {
     path: string,
     expectedSha256: string,
     maximumBytes: number,
-  ): Promise<{ bytes: Uint8Array; visibility: Visibility } | null>;
+  ): Promise<{ parts: Uint8Array[]; visibility: Visibility } | null>;
 }
 
 const GRAPHS_PATH = "/v1/orrery-graphs";
@@ -289,7 +289,8 @@ export function createCollectorReader(
       // ends the body early, so the whole body is checked before use.
       const bytes = await bodyBytes(response, maximumBytes);
       if (sha256(bytes) !== expectedSha256) throw invalid();
-      return { bytes, visibility };
+      // Red-phase stub: still one whole copy.
+      return { parts: [bytes], visibility };
     },
   };
 }
