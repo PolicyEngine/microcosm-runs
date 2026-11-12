@@ -6,7 +6,10 @@ export async function loadDocument(
   id: string,
   signal: AbortSignal,
   fetcher: Fetcher = fetch,
+  // Red-phase stub: the page's selection is not read yet.
+  _search = "",
 ) {
+  void _search;
   const response = await fetcher(`/api/runs/${encodeURIComponent(id)}/`, {
     signal,
   });
@@ -76,5 +79,6 @@ export async function loadDocument(
       JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
     ),
     digest,
+    metadata: undefined as unknown,
   };
 }
