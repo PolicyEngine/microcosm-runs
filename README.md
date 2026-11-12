@@ -1,9 +1,12 @@
 # Microcosm runs
 
 A Next.js application on Vercel displaying the actual Orrery React component.
-It loads published graph JSON directly from Vercel Blob, verifies its digest,
-and keeps selection/filter state in linkable URL fragments. It does not embed
-generated HTML or accept population datasets.
+It loads published graph JSON directly from Vercel Blob, or through its own
+server from the collector's Orrery read service when a setting turns that on
+("Reading graph documents from the collector"). It verifies each graph's
+digest, shows where the graph came from, and keeps selection/filter state in
+linkable URL fragments. It does not embed generated HTML or accept population
+datasets.
 
 ## Publication API
 
@@ -47,6 +50,7 @@ under that ID: preserve the evidence, correct it, and use a new publication ID.
 | Local development           | `BLOB_STORE_ID`, `VERCEL_OIDC_TOKEN` | Same command plus `vercel env pull`                                    |
 | All Vercel deployments      | `VERCEL_OIDC_TOKEN`                  | Vercel's enabled project OIDC integration                              |
 | Optional collector override | `ORRERY_COLLECTOR_ORIGIN`            | Tracked production default in `lib/auth.ts`; no override required      |
+| Collector reads (optional)  | Four settings, one table below       | Vercel project environment variables, per scope                        |
 | Producer                    | Existing HF login or `HF_TOKEN`      | Emitter exchanges it for a short-lived session; never sent to this app |
 
 Vercel's Blob project connection also manages `BLOB_READ_WRITE_TOKEN` in each
@@ -76,6 +80,83 @@ store connections, sets the Next.js framework, enables public application
 access, installs non-secret store IDs in the three exact scopes, and refreshes
 ignored local credentials. Public access is deliberate: writes still require
 collector authentication.
+
+## Reading graph documents from the collector
+
+The collector builds an Orrery graph document from each build's submitted
+inputs and serves it through its Orrery read service, a separate Cloud Run
+service that only this app's own Google identity may call (the collector
+README's "Serving Orrery graph files"). With `MICROCOSM_RUNS_GRAPH_SOURCE`
+set to `collector`, this app reads from it first:
+
+- **Which ID.** `/runs/{run_id}/` asks the read service for the run's
+  documents. Run IDs follow the collector's rule, so they may also hold `.`
+  and `:`. If the read service has no document for the ID, the publication
+  store answers as it does without the setting, so older publications stay
+  readable. If it has documents, it alone answers, even when none of them
+  may be shown. If it answers with an error, the answer is a 503, never the
+  publication store's. Next.js redirects `/runs/<id>/` to `/runs/<id>` when
+  the ID ends like a file name (`.stage1`); the viewer puts the trailing
+  slash back in the address, so the graph's relative links stay in the run.
+- **Which document.** The run's newest document is shown;
+  `?document=<submission_id>/<document_sha256>` shows another of the run's
+  documents, and the provenance panel lists them all with their dates.
+- **Provenance.** The panel above the graph shows the source, the run, the
+  build (country code and build ID), whether the document is its build's
+  current one, the submission, when it was recorded, its SHA-256 and size,
+  the Orrery version that validated it, the Microcosm commit its projection
+  was copied from, and the collector's version. A document the collector
+  rebuilt from a past build's staged inputs (`reconstructed: true`) is marked
+  "Reconstructed". For a publication store record, it shows the publication
+  ID, when it was published, and its inventory and graph SHA-256.
+- **Licensed runs.** Only documents the read service marks `public` are
+  listed or served. A run whose documents are all private is not found until
+  staff sign-in exists (tracker 4b · 3). Each served file is checked again:
+  one the read service now marks `private` is not served.
+- **Checks.** The server reads each file whole, keeping the parts as they
+  arrive and hashing them on the way, at most the listed size for a document
+  and 64 MiB for an upstream file, and sends it only if the
+  SHA-256 of the body equals both the `ETag` and the listed document SHA-256
+  (or the SHA-256 in an upstream file's name). The read service sends its
+  200 before its second read of the file, and a failed second read ends the
+  body early, so nothing is trusted before the whole body has matched. The
+  browser checks the graph's size and SHA-256 again.
+- **Files and caching.** `/runs/{run_id}/graph.orrery.json?document=…` and
+  `/runs/{run_id}/upstream-<sha256>.json` stream the checked parts: Vercel
+  Functions refuse an unstreamed answer over 4.5 MB, but not a streamed one. Files are sent with `Cache-Control: public, max-age=300` and
+  no `s-maxage`, because the collector can later count a document private
+  when a licensed submission with its run or build ID is recorded. Metadata
+  is `no-store` while the setting is on. Without it, publication store
+  metadata is sent with `public, max-age=300`, not as immutable for a year,
+  because the same URL answers from the collector once the setting is on. Evidence files stay in the
+  collector's private storage, and documents carry no links to them.
+
+**How this app calls the read service, without a stored key.** Whenever a
+function instance has no unexpired ID token (on its first call, then about
+once an hour), Google's Security Token Service exchanges the
+deployment's Vercel OIDC token (read with `@vercel/oidc`, as the Blob SDK
+does) for a federated access token, through a Workload Identity provider that
+trusts only this project's production and preview deployments. The IAM
+Credentials API's `generateIdToken` then issues an ID token of the reader
+service account, with the read service's URL as its audience and the
+account's email included. The instance keeps the ID token until five minutes
+before it expires. No Google credential is stored in Vercel, and none reaches
+the browser.
+
+| Setting                                   | Value                                                                                          | Where the value lives                                                                                                         |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `MICROCOSM_RUNS_GRAPH_SOURCE`             | `collector` to read from the collector; unset or `publications` for the publication store      | Vercel project environment variable, per scope; any other value refuses every read                                            |
+| `COLLECTOR_ORRERY_READ_URL`               | The read service's URL: `https://` and a host, no path                                         | The collector environment's `gcloud run services describe <service>-orrery --region <region> --format 'value(status.url)'`    |
+| `COLLECTOR_ORRERY_READER_SERVICE_ACCOUNT` | The reader service account's address                                                           | The collector repository's GitHub environment variable `TELEMETRY_ORRERY_READER_SERVICE_ACCOUNT`, in the matching environment |
+| `GOOGLE_WORKLOAD_IDENTITY_PROVIDER`       | `projects/<project number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` | The Workload Identity provider in the collector's Google Cloud project that trusts this app's Vercel tokens                   |
+
+Production uses the collector's production environment and preview
+deployments use staging: set each variable separately in Vercel's Production
+and Preview scopes, with that environment's values. When the source is
+`collector`, a missing or malformed setting refuses every read with
+`invalid_collector_configuration` instead of falling back. Local development
+keeps reading local build output ("Viewing local Microcosm output"); the
+Workload Identity provider refuses development deployments' tokens.
 
 ## Viewing local Microcosm output
 

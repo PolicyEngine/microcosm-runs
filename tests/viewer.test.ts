@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { encodeLocation, decodeLocation } from "@axiom-foundation/orrery";
-import { loadDocument } from "../lib/viewer";
+import { loadDocument, runPagePath } from "../lib/viewer";
 import type { Fetcher } from "../lib/net";
 import { sha256 } from "../lib/contract";
 const document = {
@@ -121,4 +121,104 @@ test("viewer refuses other same-origin or non-Blob graph locations", async () =>
       loadDocument("graph", new AbortController().signal, fetcher),
     ).rejects.toThrow();
   }
+});
+
+test("viewer asks for the page's selected document and reads the collector graph through this app", async () => {
+  const bytes = JSON.stringify(document);
+  const selection = `sub-${"1".repeat(32)}/${sha256(bytes)}`;
+  const graphUrl = `/runs/run-1/graph.orrery.json?document=${encodeURIComponent(selection)}`;
+  const metadata = {
+    source: "collector",
+    publication_id: "run-1",
+    document: { submission_id: `sub-${"1".repeat(32)}`, reconstructed: true },
+    documents: [],
+    files: [
+      {
+        name: "graph.orrery.json",
+        role: "graph",
+        bytes: new TextEncoder().encode(bytes).length,
+        sha256: sha256(bytes),
+        url: graphUrl,
+      },
+    ],
+  };
+  const calls: string[] = [];
+  const fetcher = (async (url) => {
+    calls.push(String(url));
+    return calls.length === 1 ? Response.json(metadata) : new Response(bytes);
+  }) as Fetcher;
+  const loaded = await loadDocument(
+    "run-1",
+    new AbortController().signal,
+    fetcher,
+    `?document=${encodeURIComponent(selection)}`,
+  ).catch(() => undefined);
+  expect(calls).toEqual([
+    `/api/runs/run-1/?document=${encodeURIComponent(selection)}`,
+    graphUrl,
+  ]);
+  expect(loaded?.document.id).toBe("fixture");
+  expect(loaded?.metadata as unknown).toEqual(metadata);
+});
+
+test("viewer refuses collector graph routes of another run or with other query parameters", async () => {
+  for (const url of [
+    "/runs/run-2/graph.orrery.json?document=x",
+    "/runs/run-1/graph.orrery.json?document=x&next=https://evil.example",
+    "/runs/run-1/graph.orrery.json?other=x",
+    "//evil.example/runs/run-1/graph.orrery.json?document=x",
+  ]) {
+    const fetcher = (async () =>
+      Response.json({
+        publication_id: "run-1",
+        files: [
+          {
+            name: "graph.orrery.json",
+            role: "graph",
+            bytes: 1,
+            sha256: "0".repeat(64),
+            url,
+          },
+        ],
+      })) as Fetcher;
+    await expect(
+      loadDocument("run-1", new AbortController().signal, fetcher),
+    ).rejects.toThrow("Invalid graph storage URL.");
+  }
+});
+
+test("the run page keeps its trailing slash, so relative upstream links stay inside the run", () => {
+  // Next.js redirects /runs/<id>/ to /runs/<id> when the ID ends like a file
+  // name, such as `.stage1`.
+  expect(runPagePath("/runs/uk-build.stage1")).toBe("/runs/uk-build.stage1/");
+  expect(runPagePath("/runs/run-1/")).toBe("/runs/run-1/");
+});
+
+test("metadata without a source is a publication store record, and collector metadata must name its document", async () => {
+  const bytes = JSON.stringify(document);
+  const file = {
+    name: "graph.orrery.json",
+    role: "graph",
+    bytes: new TextEncoder().encode(bytes).length,
+    sha256: sha256(bytes),
+    url: "https://example.public.blob.vercel-storage.com/graph.json",
+  };
+  let call = 0;
+  const older = await loadDocument(
+    "graph",
+    new AbortController().signal,
+    (async () =>
+      ++call === 1
+        ? Response.json({ publication_id: "graph", files: [file] })
+        : new Response(bytes)) as Fetcher,
+  );
+  expect(older.metadata.source).toBe("publication");
+  for (const metadata of [
+    { source: "collector", publication_id: "graph", files: [file] },
+    { source: "other", publication_id: "graph", files: [file] },
+  ])
+    await expect(
+      loadDocument("graph", new AbortController().signal, (async () =>
+        Response.json(metadata)) as Fetcher),
+    ).rejects.toThrow("Invalid graph publication metadata.");
 });

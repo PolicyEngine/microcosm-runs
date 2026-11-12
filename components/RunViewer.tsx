@@ -6,7 +6,9 @@ import {
   type GraphDocument,
 } from "@axiom-foundation/orrery";
 import { Orrery } from "@axiom-foundation/orrery/react";
-import { loadDocument } from "@/lib/viewer";
+import { loadDocument, runPagePath } from "@/lib/viewer";
+import type { RunMetadata } from "@/lib/run-metadata";
+import Provenance from "./Provenance";
 
 function subscribe(callback: () => void) {
   window.addEventListener("hashchange", callback);
@@ -20,6 +22,7 @@ export default function RunViewer({ id }: { id: string }) {
   const [result, setResult] = useState<{
     document: GraphDocument;
     digest: string;
+    metadata: RunMetadata;
   }>();
   const [error, setError] = useState<string>();
   const hash = useSyncExternalStore(
@@ -29,8 +32,17 @@ export default function RunViewer({ id }: { id: string }) {
   );
   const location = useMemo(() => decodeLocation(hash), [hash]);
   useEffect(() => {
+    // Put back the trailing slash Next.js may have redirected away, so that
+    // the graph's relative links resolve inside this run.
+    const { pathname, search, hash } = window.location;
+    if (runPagePath(pathname) !== pathname)
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${runPagePath(pathname)}${search}${hash}`,
+      );
     const controller = new AbortController();
-    loadDocument(id, controller.signal)
+    loadDocument(id, controller.signal, fetch, window.location.search)
       .then(setResult)
       .catch((error) => {
         if (!controller.signal.aborted)
@@ -53,25 +65,28 @@ export default function RunViewer({ id }: { id: string }) {
       </main>
     );
   return (
-    <div className="h-dvh w-full">
-      <Orrery
-        document={result.document}
-        documentSha256={result.digest}
-        location={location}
-        onLocationChange={(next, change) => {
-          const hash = encodeLocation(next);
-          if (hash !== window.location.hash) {
-            window.history[
-              change.reason === "view" ? "replaceState" : "pushState"
-            ](
-              null,
-              "",
-              `${window.location.pathname}${window.location.search}${hash}`,
-            );
-            window.dispatchEvent(new HashChangeEvent("hashchange"));
-          }
-        }}
-      />
+    <div className="flex h-dvh w-full flex-col">
+      <Provenance metadata={result.metadata} />
+      <div className="min-h-0 w-full flex-1">
+        <Orrery
+          document={result.document}
+          documentSha256={result.digest}
+          location={location}
+          onLocationChange={(next, change) => {
+            const hash = encodeLocation(next);
+            if (hash !== window.location.hash) {
+              window.history[
+                change.reason === "view" ? "replaceState" : "pushState"
+              ](
+                null,
+                "",
+                `${window.location.pathname}${window.location.search}${hash}`,
+              );
+              window.dispatchEvent(new HashChangeEvent("hashchange"));
+            }
+          }}
+        />
+      </div>
     </div>
   );
 }
