@@ -35,3 +35,8 @@ export function documentSelection(
 ): string {
   return `${document.submission_id}/${document.document_sha256}`;
 }
+
+/** Where staff start signing in, returning afterwards to `path` on this site. */
+export function signInHref(path: string): string {
+  return `/api/auth/google/start/?next=${encodeURIComponent(path)}`;
+}

@@ -1,12 +1,11 @@
 import { parseGraphDocument } from "@axiom-foundation/orrery";
 import type { Fetcher } from "./net";
-import type { RunMetadata } from "./run-metadata";
+import { signInHref, type RunMetadata } from "./run-metadata";
 
 const invalidLocation = () => new Error("Invalid graph storage URL.");
 
 /** A licensed run: only signed-in staff may view it. */
 export class SignInRequired extends Error {
-  // Red-phase stub: never thrown yet.
   constructor(public signInHref: string) {
     super("Sign in with a policyengine.org Google account to view this run.");
   }
@@ -65,6 +64,13 @@ export async function loadDocument(
   );
   if (response.status === 404)
     throw new Error("This graph publication was not found.");
+  if (response.status === 401) {
+    const answer = await response.json().catch(() => null);
+    if (answer?.error === "sign_in_required")
+      throw new SignInRequired(
+        signInHref(`/runs/${encodeURIComponent(id)}/${search}`),
+      );
+  }
   if (!response.ok)
     throw new Error("Graph publication metadata is unavailable.");
   const metadata: RunMetadata = await response.json();

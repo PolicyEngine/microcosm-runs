@@ -1,5 +1,5 @@
 import { failure } from "@/lib/http";
-import { runDependencies } from "@/lib/run-dependencies";
+import { requestAccess, runDependencies } from "@/lib/run-dependencies";
 import { runFileResponse } from "@/lib/runs";
 export const runtime = "nodejs";
 // A collector file of up to 64 MiB is read whole and checked before it is sent.
@@ -15,6 +15,7 @@ export async function GET(
       filename,
       new URL(request.url).searchParams,
       runDependencies(),
+      await requestAccess(request),
     );
   } catch (error) {
     return failure(error);

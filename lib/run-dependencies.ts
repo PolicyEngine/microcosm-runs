@@ -1,8 +1,9 @@
 import { collectorReadConfig, createCollectorReader } from "./collector";
 import { createIdentityTokenSource } from "./google-identity";
 import { createLocalPublications, localPublicationsDirectory } from "./local";
-import type { RunDependencies } from "./runs";
+import type { RequestAccess, RunDependencies } from "./runs";
 import { createService } from "./service";
+import { signInConfig, staffEmail } from "./staff-session";
 import { blobStorage } from "./storage";
 
 /** One token source per configuration, so an ID token is reused across requests. */
@@ -36,5 +37,26 @@ export function runDependencies(
     local: null,
     collector: createCollectorReader(config, { idToken }),
     publications,
+  };
+}
+
+/**
+ * Whether the request comes from signed-in staff. Sign-in settings that are
+ * missing or malformed mean nobody is staff; public runs stay readable.
+ */
+export async function requestAccess(
+  request: Request,
+  environment: Record<string, string | undefined> = process.env,
+): Promise<RequestAccess> {
+  let config;
+  try {
+    config = signInConfig(environment);
+  } catch {
+    config = null;
+  }
+  if (!config) return { staffEmail: null, signInAvailable: false };
+  return {
+    staffEmail: await staffEmail(request.headers, config),
+    signInAvailable: true,
   };
 }

@@ -49,6 +49,8 @@ const IMMUTABLE = "public, max-age=31536000, immutable";
  * keep it.
  */
 const COLLECTOR_FILE_CACHE = "public, max-age=300";
+/** Anything licensed: never stored by a browser or any shared cache. */
+const PRIVATE = "private, no-store";
 const SENT_PART_BYTES = 1024 * 1024;
 
 function json(body: unknown, status: number, cacheControl: string): Response {
@@ -80,11 +82,27 @@ function provenance(document: CollectorDocument): DocumentProvenance {
 }
 
 /**
- * The documents this viewer may show. Licensed runs' private documents wait
- * for staff sign-in (tracker 4b · 3), so none is shown yet.
+ * The documents this request may see: all of them for signed-in staff, and
+ * only public ones for everyone else.
  */
-function viewable(documents: CollectorDocument[]): CollectorDocument[] {
-  return documents.filter((document) => document.visibility === "public");
+function viewable(
+  documents: CollectorDocument[],
+  access: RequestAccess,
+): CollectorDocument[] {
+  return access.staffEmail
+    ? documents
+    : documents.filter((document) => document.visibility === "public");
+}
+
+/**
+ * Not found, or, when only signed-in staff could see what was asked for and
+ * this deployment offers sign-in, a request to sign in. Either way nothing of
+ * the private documents is sent.
+ */
+function hidden(access: RequestAccess, privateMatch: boolean): Response {
+  return privateMatch && !access.staffEmail && access.signInAvailable
+    ? json({ error: "sign_in_required" }, 401, "no-store")
+    : notFound();
 }
 
 function chosen(
@@ -134,10 +152,8 @@ export async function runMetadataResponse(
   id: string,
   search: URLSearchParams,
   dependencies: RunDependencies,
-  // Red-phase stub: not read yet.
   access: RequestAccess = NO_ACCESS,
 ): Promise<Response> {
-  void access;
   try {
     if (dependencies.local) {
       const result = await dependencies.local.read(id);
@@ -160,12 +176,22 @@ export async function runMetadataResponse(
         ? json({ ...result, source: "publication" }, 200, "no-store")
         : notFound();
     }
-    const shown = viewable(documents);
-    const document = chosen(shown, search.get("document"));
-    if (!document) return notFound();
+    const shown = viewable(documents, access);
+    const selection = search.get("document");
+    const document = chosen(shown, selection);
+    if (!document)
+      return hidden(
+        access,
+        selection === null
+          ? shown.length === 0
+          : chosen(documents, selection) !== null,
+      );
     const metadata: CollectorRunMetadata = {
       source: "collector",
-      viewer: { signed_in_as: null, sign_in_available: false },
+      viewer: {
+        signed_in_as: access.staffEmail,
+        sign_in_available: access.signInAvailable,
+      },
       publication_id: id,
       document: provenance(document),
       documents: shown.map(provenance),
@@ -179,7 +205,8 @@ export async function runMetadataResponse(
         },
       ],
     };
-    return json(metadata, 200, "no-store");
+    // Staff answers can list private documents.
+    return json(metadata, 200, access.staffEmail ? PRIVATE : "no-store");
   } catch (error) {
     return failure(error);
   }
@@ -199,10 +226,8 @@ export async function runFileResponse(
   name: string,
   search: URLSearchParams,
   dependencies: RunDependencies,
-  // Red-phase stub: not read yet.
   access: RequestAccess = NO_ACCESS,
 ): Promise<Response> {
-  void access;
   try {
     if (dependencies.local) {
       const bytes = await dependencies.local.file(id, name);
@@ -226,7 +251,7 @@ export async function runFileResponse(
         : null;
       return url ? Response.redirect(url, 307) : notFound();
     }
-    const shown = viewable(documents);
+    const shown = viewable(documents, access);
     const selection = search.get("document");
     let target: { path: string; sha256: string; maximum: number } | null = null;
     if (name === GRAPH_FILE_NAME) {
@@ -259,18 +284,19 @@ export async function runFileResponse(
       target.sha256,
       target.maximum,
     );
+    if (!file) return notFound();
     // The read service computes visibility on every answer; a document that
-    // has become private since it was listed is not served.
-    if (!file || file.visibility !== "public") return notFound();
-    return new Response(streamOf(file.bytes), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": COLLECTOR_FILE_CACHE,
-        ETag: `"${target.sha256}"`,
-        "X-Content-Type-Options": "nosniff",
-      },
+    // has become private since it was listed goes only to staff, uncached.
+    const licensed = file.visibility !== "public";
+    if (licensed && !access.staffEmail) return notFound();
+    const headers = new Headers({
+      "Content-Type": "application/json",
+      "Cache-Control": licensed ? PRIVATE : COLLECTOR_FILE_CACHE,
+      ETag: `"${target.sha256}"`,
+      "X-Content-Type-Options": "nosniff",
     });
+    if (licensed) headers.set("Vary", "Cookie");
+    return new Response(streamOf(file.bytes), { status: 200, headers });
   } catch (error) {
     return failure(error);
   }

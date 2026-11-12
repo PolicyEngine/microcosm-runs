@@ -1,0 +1,1 @@
+PolicyEngine staff can sign in with their policyengine.org Google accounts to view licensed runs' private Orrery graph files, which microcosm-runs' server fetches from the collector with its own identity. Everyone else sees only public documents, and private documents and files are never cached.

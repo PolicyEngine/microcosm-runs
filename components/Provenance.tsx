@@ -2,12 +2,21 @@ import {
   documentChoices,
   isReconstructed,
   provenanceRows,
+  staffAccess,
 } from "@/lib/provenance";
 import type { RunMetadata } from "@/lib/run-metadata";
 
 /** Where the shown graph document came from, and the run's other documents. */
-export default function Provenance({ metadata }: { metadata: RunMetadata }) {
+export default function Provenance({
+  metadata,
+  path,
+}: {
+  metadata: RunMetadata;
+  /** This page's path and query, to return to after signing in. */
+  path: string;
+}) {
   const rows = provenanceRows(metadata);
+  const access = staffAccess(metadata, path);
   const choices = documentChoices(metadata);
   const reconstructed = isReconstructed(metadata);
   return (
@@ -26,6 +35,28 @@ export default function Provenance({ metadata }: { metadata: RunMetadata }) {
           </span>
         )}
       </summary>
+      {access && (
+        <div className="mt-2 flex items-center gap-3">
+          {access.signedInAs ? (
+            <>
+              <span className="text-muted-foreground">
+                Signed in as {access.signedInAs}
+              </span>
+              <form method="post" action="/api/auth/sign-out/">
+                <button className="underline" type="submit">
+                  Sign out
+                </button>
+              </form>
+            </>
+          ) : (
+            access.signInHref && (
+              <a className="underline" href={access.signInHref}>
+                Staff sign-in
+              </a>
+            )
+          )}
+        </div>
+      )}
       <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1">
         {rows.map((row) => (
           <div key={row.label} className="contents">
