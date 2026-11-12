@@ -1,4 +1,4 @@
-import { publicationId } from "@/lib/contract";
+import { runId } from "@/lib/contract";
 import RunViewer from "@/components/RunViewer";
 import { notFound } from "next/navigation";
 export default async function Page({
@@ -8,7 +8,8 @@ export default async function Page({
 }) {
   const { id } = await params;
   try {
-    publicationId(id);
+    // Run IDs include every publication ID, and may also hold `.` and `:`.
+    runId(id);
   } catch {
     notFound();
   }

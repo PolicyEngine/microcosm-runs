@@ -158,7 +158,7 @@ test("viewer asks for the page's selected document and reads the collector graph
     graphUrl,
   ]);
   expect(loaded?.document.id).toBe("fixture");
-  expect(loaded?.metadata).toEqual(metadata);
+  expect(loaded?.metadata as unknown).toEqual(metadata);
 });
 
 test("viewer refuses collector graph routes of another run or with other query parameters", async () => {

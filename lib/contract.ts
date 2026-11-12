@@ -37,11 +37,21 @@ export class ApiError extends Error {
   }
 }
 export function publicationId(value: unknown): string {
+  if (typeof value !== "string" || !isPublicationId(value))
+    throw new ApiError(400, "invalid_publication_id");
+  return value;
+}
+/** A publication ID is also a valid run ID; a run ID may hold `.` and `:`. */
+export function isPublicationId(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
+}
+/** A telemetry run ID, as the collector accepts one. */
+export function runId(value: unknown): string {
   if (
     typeof value !== "string" ||
-    !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value)
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(value)
   )
-    throw new ApiError(400, "invalid_publication_id");
+    throw new ApiError(400, "invalid_run_id");
   return value;
 }
 const roleNames: Record<FileRole, RegExp> = {

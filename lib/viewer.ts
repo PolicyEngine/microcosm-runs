@@ -1,47 +1,71 @@
 import { parseGraphDocument } from "@axiom-foundation/orrery";
-import type { Publication } from "./contract";
 import type { Fetcher } from "./net";
+import type { RunMetadata } from "./run-metadata";
+
+const invalidLocation = () => new Error("Invalid graph storage URL.");
+
+/**
+ * Where the graph may be fetched from: this app's own route for the run
+ * (a local development file, or a collector document named by its
+ * `document` selection), or public Blob storage.
+ */
+function graphSource(id: string, url: string): string | URL {
+  const route = `/runs/${encodeURIComponent(id)}/graph.orrery.json`;
+  if (url.startsWith("/") && !url.startsWith("//")) {
+    const base = "https://runs.invalid";
+    const parsed = new URL(url, base);
+    const keys = [...parsed.searchParams.keys()];
+    if (
+      parsed.origin !== base ||
+      parsed.pathname !== route ||
+      parsed.hash ||
+      keys.length > 1 ||
+      keys.some((key) => key !== "document")
+    )
+      throw invalidLocation();
+    return url;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw invalidLocation();
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    !parsed.hostname.endsWith(".public.blob.vercel-storage.com") ||
+    parsed.username ||
+    parsed.password
+  )
+    throw invalidLocation();
+  return parsed;
+}
 
 export async function loadDocument(
   id: string,
   signal: AbortSignal,
   fetcher: Fetcher = fetch,
-  // Red-phase stub: the page's selection is not read yet.
-  _search = "",
+  /** The page's query string; its `document` selects a collector document. */
+  search = "",
 ) {
-  void _search;
-  const response = await fetcher(`/api/runs/${encodeURIComponent(id)}/`, {
-    signal,
-  });
+  const selection = new URLSearchParams(search).get("document");
+  const response = await fetcher(
+    `/api/runs/${encodeURIComponent(id)}/${
+      selection ? `?document=${encodeURIComponent(selection)}` : ""
+    }`,
+    { signal },
+  );
   if (response.status === 404)
     throw new Error("This graph publication was not found.");
   if (!response.ok)
     throw new Error("Graph publication metadata is unavailable.");
-  const publication: Publication = await response.json();
-  const file = publication.files?.find(
+  const metadata: RunMetadata = await response.json();
+  const file = metadata.files?.find(
     (f) => f.role === "graph" && f.name === "graph.orrery.json",
   );
-  if (
-    !file ||
-    publication.publication_id !== id ||
-    file.bytes > 64 * 1024 * 1024
-  )
+  if (!file || metadata.publication_id !== id || file.bytes > 64 * 1024 * 1024)
     throw new Error("Invalid graph publication metadata.");
-  // A local development server serves the graph from this app's own route;
-  // otherwise only public Blob storage is accepted.
-  const local = `/runs/${encodeURIComponent(id)}/graph.orrery.json`;
-  let source: string | URL = local;
-  if (file.url !== local) {
-    const url = new URL(file.url);
-    if (
-      url.protocol !== "https:" ||
-      !url.hostname.endsWith(".public.blob.vercel-storage.com") ||
-      url.username ||
-      url.password
-    )
-      throw new Error("Invalid graph storage URL.");
-    source = url;
-  }
+  const source = graphSource(id, file.url);
   const graph = await fetcher(source, { signal });
   if (!graph.ok || !graph.body)
     throw new Error("The stored graph is unavailable.");
@@ -79,6 +103,6 @@ export async function loadDocument(
       JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
     ),
     digest,
-    metadata: undefined as unknown,
+    metadata,
   };
 }
