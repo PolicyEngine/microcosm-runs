@@ -20,8 +20,10 @@ export default function Provenance({
   const choices = documentChoices(metadata);
   const reconstructed = isReconstructed(metadata);
   return (
-    <div className="flex items-start gap-4 border-b border-border bg-background px-4 py-2 text-sm text-foreground">
-      <details className="min-w-0 flex-1">
+    <div className="flex flex-wrap items-start gap-x-4 gap-y-1 border-b border-border bg-background px-4 py-2 text-sm text-foreground">
+      {/* The panel keeps at least 16rem; on a narrow screen the sign-in
+          controls wrap below it instead of squeezing it. */}
+      <details className="min-w-[min(100%,16rem)] flex-1">
         <summary className="cursor-pointer select-none">
           <span className="font-medium">Provenance</span>
           <span className="ml-2 text-muted-foreground">
@@ -76,10 +78,10 @@ export default function Provenance({
         )}
       </details>
       {access && (
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3">
           {access.signedInAs ? (
             <>
-              <span className="text-muted-foreground">
+              <span className="break-all text-muted-foreground">
                 Signed in as {access.signedInAs}
               </span>
               <form method="post" action="/api/auth/sign-out/">
