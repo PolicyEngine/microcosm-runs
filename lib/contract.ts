@@ -61,9 +61,14 @@ export function runId(value: unknown): string {
  * arrives as `%3A`. Run IDs hold no `%`, so decoding an already decoded ID
  * changes nothing.
  */
-export function runIdFromPage(value: string): string | null {
+export function runIdFromPage(
+  value: string,
+  /** Whether collector reads are on; without them only publication IDs open. */
+  collectorReads: boolean,
+): string | null {
   try {
-    return runId(decodeURIComponent(value));
+    const id = decodeURIComponent(value);
+    return collectorReads ? runId(id) : publicationId(id);
   } catch {
     return null;
   }

@@ -140,8 +140,9 @@ set to `collector`, this app reads from it first:
   files stay in the collector's private storage, and documents carry no
   links to them.
 
-**How this app calls the read service, without a stored key.** On each
-cold function instance, Google's Security Token Service exchanges the
+**How this app calls the read service, without a stored key.** Whenever a
+function instance has no unexpired ID token (on its first call, then about
+once an hour), Google's Security Token Service exchanges the
 deployment's Vercel OIDC token (read with `@vercel/oidc`, as the Blob SDK
 does) for a federated access token, through a Workload Identity provider that
 trusts only this project's production and preview deployments. The IAM
