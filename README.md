@@ -51,6 +51,7 @@ under that ID: preserve the evidence, correct it, and use a new publication ID.
 | All Vercel deployments      | `VERCEL_OIDC_TOKEN`                  | Vercel's enabled project OIDC integration                              |
 | Optional collector override | `ORRERY_COLLECTOR_ORIGIN`            | Tracked production default in `lib/auth.ts`; no override required      |
 | Collector reads (optional)  | Four settings, one table below       | Vercel project environment variables, per scope                        |
+| Staff sign-in (optional)    | Three settings, one table below      | Vercel project environment variables, per scope; two are sensitive     |
 | Producer                    | Existing HF login or `HF_TOKEN`      | Emitter exchanges it for a short-lived session; never sent to this app |
 
 Vercel's Blob project connection also manages `BLOB_READ_WRITE_TOKEN` in each
@@ -109,10 +110,13 @@ set to `collector`, this app reads from it first:
   rebuilt from a past build's staged inputs (`reconstructed: true`) is marked
   "Reconstructed". For a publication store record, it shows the publication
   ID, when it was published, and its inventory and graph SHA-256.
-- **Licensed runs.** Only documents the read service marks `public` are
-  listed or served. A run whose documents are all private is not found until
-  staff sign-in exists (tracker 4b · 3). Each served file is checked again:
-  one the read service now marks `private` is not served.
+- **Licensed runs.** Only signed-in staff see documents the read service
+  marks `private` ("Staff sign-in for licensed runs"). Everyone else is sent
+  only `public` ones: a run whose documents are all private, or a selection
+  naming a private document, answers 401 `sign_in_required` (404 where this
+  deployment offers no sign-in). Each served file's visibility is checked
+  again when it is fetched: one the read service now marks `private` goes
+  only to staff.
 - **Checks.** The server reads each file whole, keeping the parts as they
   arrive and hashing them on the way, at most the listed size for a document
   and 64 MiB for an upstream file, and sends it only if the
@@ -123,13 +127,18 @@ set to `collector`, this app reads from it first:
   browser checks the graph's size and SHA-256 again.
 - **Files and caching.** `/runs/{run_id}/graph.orrery.json?document=…` and
   `/runs/{run_id}/upstream-<sha256>.json` stream the checked parts: Vercel
-  Functions refuse an unstreamed answer over 4.5 MB, but not a streamed one. Files are sent with `Cache-Control: public, max-age=300` and
-  no `s-maxage`, because the collector can later count a document private
-  when a licensed submission with its run or build ID is recorded. Metadata
-  is `no-store` while the setting is on. Without it, publication store
-  metadata is sent with `public, max-age=300`, not as immutable for a year,
-  because the same URL answers from the collector once the setting is on. Evidence files stay in the
-  collector's private storage, and documents carry no links to them.
+  Functions refuse an unstreamed answer over 4.5 MB, but not a streamed one.
+  Public files are sent with `Cache-Control: public, max-age=300` and no
+  `s-maxage`, because the collector can later count a document private when
+  a licensed submission with its run or build ID is recorded. Private files,
+  and metadata for signed-in staff, are sent with
+  `Cache-Control: private, no-store`, so no browser or shared cache keeps
+  them. Other metadata is
+  `no-store` while the setting is on. Without it, publication store metadata
+  is sent with `public, max-age=300`, not as immutable for a year, because
+  the same URL answers from the collector once the setting is on. Evidence
+  files stay in the collector's private storage, and documents carry no
+  links to them.
 
 **How this app calls the read service, without a stored key.** Whenever a
 function instance has no unexpired ID token (on its first call, then about
@@ -157,6 +166,61 @@ and Preview scopes, with that environment's values. When the source is
 `invalid_collector_configuration` instead of falling back. Local development
 keeps reading local build output ("Viewing local Microcosm output"); the
 Workload Identity provider refuses development deployments' tokens.
+
+## Staff sign-in for licensed runs
+
+PolicyEngine staff sign in with their policyengine.org Google accounts to see
+licensed runs' private graph documents, which this app's server reads from the
+collector with its own identity, as above. Sign-in only decides what this app
+sends to the browser: the collector never sees the person's identity.
+
+- **Signing in.** "Staff sign-in" in the provenance panel, or the prompt on a
+  licensed run, goes to `/api/auth/google/start/?next=<this page>`. That sends
+  the person to Google with an authorization code request with PKCE (S256), a
+  random state and nonce, the scopes `openid email`, and `hd=policyengine.org`
+  as a hint. The state, nonce and PKCE verifier wait in a signed, ten-minute,
+  host-only cookie named after the state
+  (`__Host-microcosm-runs-sign-in-<state>`), so two sign-ins in one browser
+  don't replace each other.
+- **Coming back.** `/api/auth/google/callback/` requires the state to match
+  that cookie, exchanges the code with the client secret and the PKCE
+  verifier, and checks the ID token against Google's published keys. It must
+  be issued by Google for this OAuth client, unexpired, carry the sign-in's
+  nonce, and name a verified address on exactly `policyengine.org` (not a
+  subdomain), with the `hd` claim saying `policyengine.org`. Tracker 4b · 2
+  gives the OAuth client an internal consent screen, which limits sign-in to
+  the organization's accounts; these checks don't rely on it. An ID token
+  that can't be checked because Google's keys don't answer is a 502, not a
+  refusal. The `hd` claim names the account's Google Workspace domain, so
+  this assumes policyengine.org is that Workspace's primary domain; a real
+  sign-in is the first check of it. The person then
+  returns to the page they came from, which must be a path on this site.
+- **The session.** An eight-hour `__Host-microcosm-runs-session` cookie
+  (`HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`) holds the address,
+  signed with HMAC-SHA-256 under `MICROCOSM_RUNS_SESSION_SECRET`. Nothing is
+  stored on the server. "Sign out" posts to `/api/auth/sign-out/`, which
+  refuses requests from other sites. Changing the session secret ends every
+  session.
+- **What staff get.** Their metadata lists the run's private documents too,
+  and private files are sent to them with
+  `Cache-Control: private, no-store` and `Vary: Cookie`. Public files keep
+  their public caching,
+  since their bytes are the same for everyone.
+
+| Setting                         | Value                                                            | Where the value lives                                                                                                  |
+| ------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `GOOGLE_OAUTH_CLIENT_ID`        | `<number>-<id>.apps.googleusercontent.com`                       | The microcosm-runs OAuth client in the policyengine.org organization's Google Cloud project (tracker 4b · 2)           |
+| `GOOGLE_OAUTH_CLIENT_SECRET`    | The OAuth client's secret                                        | The same OAuth client; a sensitive Vercel environment variable                                                         |
+| `MICROCOSM_RUNS_SESSION_SECRET` | At least 32 random characters, such as `openssl rand -base64 48` | Generated by hand for each scope; a sensitive Vercel environment variable, never shared between Production and Preview |
+
+Set all three in each Vercel scope, or none: some but not all, or a
+malformed value, turns sign-in off (its routes answer 503
+`invalid_sign_in_configuration`), and public runs stay readable. Google
+returns only to redirect URIs registered on the OAuth client, so sign-in
+works only on origins whose `https://<origin>/api/auth/google/callback/` is
+registered there: production's own domain, and any fixed preview domain added
+on purpose. A preview deployment's generated URL is not registered, so
+sign-in fails there.
 
 ## Viewing local Microcosm output
 
