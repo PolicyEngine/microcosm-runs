@@ -26,6 +26,12 @@ export interface PublicationReader {
   read(id: string): Promise<Publication | null>;
   evidence(id: string, name: string): Promise<string | null>;
 }
+/** Whether the request comes from signed-in staff, from the session cookie. */
+export interface RequestAccess {
+  staffEmail: string | null;
+  signInAvailable: boolean;
+}
+const NO_ACCESS: RequestAccess = { staffEmail: null, signInAvailable: false };
 export interface RunDependencies {
   /** A development directory of preserved publications, read instead of anything else. */
   local: ReturnType<typeof createLocalPublications> | null;
@@ -50,6 +56,8 @@ const PUBLICATION_METADATA_CACHE = "public, max-age=300";
  * keep it.
  */
 const COLLECTOR_FILE_CACHE = "public, max-age=300";
+/** Anything licensed: never stored by a browser or any shared cache. */
+const PRIVATE = "private, no-store";
 
 function json(body: unknown, status: number, cacheControl: string): Response {
   return Response.json(body, {
@@ -80,11 +88,27 @@ function provenance(document: CollectorDocument): DocumentProvenance {
 }
 
 /**
- * The documents this viewer may show. Licensed runs' private documents wait
- * for staff sign-in (tracker 4b · 3), so none is shown yet.
+ * The documents this request may see: all of them for signed-in staff, and
+ * only public ones for everyone else.
  */
-function viewable(documents: CollectorDocument[]): CollectorDocument[] {
-  return documents.filter((document) => document.visibility === "public");
+function viewable(
+  documents: CollectorDocument[],
+  access: RequestAccess,
+): CollectorDocument[] {
+  return access.staffEmail
+    ? documents
+    : documents.filter((document) => document.visibility === "public");
+}
+
+/**
+ * Not found, or, when only signed-in staff could see what was asked for and
+ * this deployment offers sign-in, a request to sign in. Either way nothing of
+ * the private documents is sent.
+ */
+function hidden(access: RequestAccess, privateMatch: boolean): Response {
+  return privateMatch && !access.staffEmail && access.signInAvailable
+    ? json({ error: "sign_in_required" }, 401, "no-store")
+    : notFound();
 }
 
 function chosen(
@@ -119,6 +143,42 @@ function streamOf(parts: Uint8Array[]): ReadableStream<Uint8Array> {
 }
 
 /**
+ * Which collector file `/runs/{id}/{name}` names among these documents:
+ * `graph.orrery.json` of the selected (or newest) document, or an
+ * `upstream-<sha256>.json` file one of them links to, the selected one's
+ * first.
+ */
+function fileTarget(
+  documents: CollectorDocument[],
+  name: string,
+  selection: string | null,
+): { path: string; sha256: string; maximum: number } | null {
+  if (name === GRAPH_FILE_NAME) {
+    const document = chosen(documents, selection);
+    return document
+      ? {
+          path: document.document_path,
+          sha256: document.document_sha256,
+          maximum: document.document_bytes,
+        }
+      : null;
+  }
+  const upstreamSha256 = UPSTREAM_FILE_NAME.exec(name)?.[1];
+  if (!upstreamSha256) return null;
+  const selected = selection === null ? null : chosen(documents, selection);
+  const ordered = selected
+    ? [selected, ...documents.filter((document) => document !== selected)]
+    : documents;
+  for (const document of ordered) {
+    const path = document.upstream_paths.find((candidate) =>
+      candidate.endsWith(`/${name}`),
+    );
+    if (path) return { path, sha256: upstreamSha256, maximum: MAX_FILE_BYTES };
+  }
+  return null;
+}
+
+/**
  * `GET /api/runs/{id}/`: a run's or publication's metadata.
  *
  * - A local development directory, when configured, answers alone.
@@ -132,6 +192,7 @@ export async function runMetadataResponse(
   id: string,
   search: URLSearchParams,
   dependencies: RunDependencies,
+  access: RequestAccess = NO_ACCESS,
 ): Promise<Response> {
   try {
     if (dependencies.local) {
@@ -159,11 +220,22 @@ export async function runMetadataResponse(
         ? json({ ...result, source: "publication" }, 200, "no-store")
         : notFound();
     }
-    const shown = viewable(documents);
-    const document = chosen(shown, search.get("document"));
-    if (!document) return notFound();
+    const shown = viewable(documents, access);
+    const selection = search.get("document");
+    const document = chosen(shown, selection);
+    if (!document)
+      return hidden(
+        access,
+        selection === null
+          ? shown.length === 0
+          : chosen(documents, selection) !== null,
+      );
     const metadata: CollectorRunMetadata = {
       source: "collector",
+      viewer: {
+        signed_in_as: access.staffEmail,
+        sign_in_available: access.signInAvailable,
+      },
       publication_id: id,
       document: provenance(document),
       documents: shown.map(provenance),
@@ -177,7 +249,8 @@ export async function runMetadataResponse(
         },
       ],
     };
-    return json(metadata, 200, "no-store");
+    // Staff answers can list private documents.
+    return json(metadata, 200, access.staffEmail ? PRIVATE : "no-store");
   } catch (error) {
     return failure(error);
   }
@@ -197,6 +270,7 @@ export async function runFileResponse(
   name: string,
   search: URLSearchParams,
   dependencies: RunDependencies,
+  access: RequestAccess = NO_ACCESS,
 ): Promise<Response> {
   try {
     if (dependencies.local) {
@@ -221,51 +295,29 @@ export async function runFileResponse(
         : null;
       return url ? Response.redirect(url, 307) : notFound();
     }
-    const shown = viewable(documents);
     const selection = search.get("document");
-    let target: { path: string; sha256: string; maximum: number } | null = null;
-    if (name === GRAPH_FILE_NAME) {
-      const document = chosen(shown, selection);
-      if (document)
-        target = {
-          path: document.document_path,
-          sha256: document.document_sha256,
-          maximum: document.document_bytes,
-        };
-    } else {
-      const upstreamSha256 = UPSTREAM_FILE_NAME.exec(name)?.[1];
-      const selected = selection === null ? null : chosen(shown, selection);
-      const ordered = selected
-        ? [selected, ...shown.filter((document) => document !== selected)]
-        : shown;
-      for (const document of upstreamSha256 ? ordered : []) {
-        const path = document.upstream_paths.find((candidate) =>
-          candidate.endsWith(`/${name}`),
-        );
-        if (path && upstreamSha256) {
-          target = { path, sha256: upstreamSha256, maximum: MAX_FILE_BYTES };
-          break;
-        }
-      }
-    }
-    if (!target) return notFound();
+    const target = fileTarget(viewable(documents, access), name, selection);
+    // Asked of a file only private documents hold: sign in, if offered.
+    if (!target)
+      return hidden(access, fileTarget(documents, name, selection) !== null);
     const file = await dependencies.collector.file(
       target.path,
       target.sha256,
       target.maximum,
     );
+    if (!file) return notFound();
     // The read service computes visibility on every answer; a document that
-    // has become private since it was listed is not served.
-    if (!file || file.visibility !== "public") return notFound();
-    return new Response(streamOf(file.parts), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": COLLECTOR_FILE_CACHE,
-        ETag: `"${target.sha256}"`,
-        "X-Content-Type-Options": "nosniff",
-      },
+    // has become private since it was listed goes only to staff, uncached.
+    const licensed = file.visibility !== "public";
+    if (licensed && !access.staffEmail) return notFound();
+    const headers = new Headers({
+      "Content-Type": "application/json",
+      "Cache-Control": licensed ? PRIVATE : COLLECTOR_FILE_CACHE,
+      ETag: `"${target.sha256}"`,
+      "X-Content-Type-Options": "nosniff",
     });
+    if (licensed) headers.set("Vary", "Cookie");
+    return new Response(streamOf(file.parts), { status: 200, headers });
   } catch (error) {
     return failure(error);
   }

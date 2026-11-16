@@ -6,7 +6,7 @@ import {
   type GraphDocument,
 } from "@axiom-foundation/orrery";
 import { Orrery } from "@axiom-foundation/orrery/react";
-import { loadDocument, runPagePath } from "@/lib/viewer";
+import { loadDocument, runPagePath, SignInRequired } from "@/lib/viewer";
 import type { RunMetadata } from "@/lib/run-metadata";
 import Provenance from "./Provenance";
 
@@ -24,7 +24,10 @@ export default function RunViewer({ id }: { id: string }) {
     digest: string;
     metadata: RunMetadata;
   }>();
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<{
+    message: string;
+    signInHref?: string;
+  }>();
   const hash = useSyncExternalStore(
     subscribe,
     () => window.location.hash,
@@ -46,16 +49,26 @@ export default function RunViewer({ id }: { id: string }) {
       .then(setResult)
       .catch((error) => {
         if (!controller.signal.aborted)
-          setError(
-            error instanceof Error ? error.message : "Unable to load graph.",
-          );
+          setError({
+            message:
+              error instanceof Error ? error.message : "Unable to load graph.",
+            signInHref:
+              error instanceof SignInRequired ? error.signInHref : undefined,
+          });
       });
     return () => controller.abort();
   }, [id]);
   if (error)
     return (
-      <main className="p-6 text-destructive" role="alert">
-        {error}
+      <main className="p-6" role="alert">
+        <p className={error.signInHref ? "" : "text-destructive"}>
+          {error.message}
+        </p>
+        {error.signInHref && (
+          <a className="mt-4 inline-block underline" href={error.signInHref}>
+            Sign in with Google
+          </a>
+        )}
       </main>
     );
   if (!result)
@@ -66,7 +79,10 @@ export default function RunViewer({ id }: { id: string }) {
     );
   return (
     <div className="flex h-dvh w-full flex-col">
-      <Provenance metadata={result.metadata} />
+      <Provenance
+        metadata={result.metadata}
+        path={`${window.location.pathname}${window.location.search}`}
+      />
       <div className="min-h-0 w-full flex-1">
         <Orrery
           document={result.document}

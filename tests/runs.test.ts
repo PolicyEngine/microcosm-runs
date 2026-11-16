@@ -398,3 +398,176 @@ test("a collector that cannot be read is a 503, never a fallback to the publicat
   );
   expect(file.status).toBe(503);
 });
+
+const staff = {
+  staffEmail: "staff@policyengine.org",
+  signInAvailable: true,
+};
+const anonymous = { staffEmail: null, signInAvailable: true };
+
+test("signed-in staff see a licensed run's private documents, never cached", async () => {
+  const upstream = new TextEncoder().encode('{"licensed":"producer"}');
+  const upstreamName = `upstream-${sha256(upstream)}.json`;
+  const bytes = documentBytes("licensed", upstreamName);
+  const licensed = collectorDocument({ bytes, visibility: "private" });
+  const upstreamPath = `/v1/orrery-graphs/${licensed.submission_id}/${licensed.document_sha256}/${upstreamName}`;
+  licensed.upstream_paths = [upstreamPath];
+  const collector = fakeCollector(
+    [licensed],
+    { [licensed.document_path]: bytes, [upstreamPath]: upstream },
+    () => "private",
+  );
+  const metadata = await runMetadataResponse(
+    "run-1",
+    search(),
+    dependencies(collector),
+    staff,
+  );
+  expect(metadata.status).toBe(200);
+  expect(metadata.headers.get("cache-control")).toBe("private, no-store");
+  const body = await metadata.json();
+  expect(body.document.visibility).toBe("private");
+  expect(body.viewer).toEqual({
+    signed_in_as: "staff@policyengine.org",
+    sign_in_available: true,
+  });
+  for (const name of ["graph.orrery.json", upstreamName]) {
+    const file = await runFileResponse(
+      "run-1",
+      name,
+      search(),
+      dependencies(collector),
+      staff,
+    );
+    expect(file.status).toBe(200);
+    expect(file.headers.get("cache-control")).toBe("private, no-store");
+    expect(file.headers.get("vary")).toBe("Cookie");
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(
+      name === upstreamName ? upstream : bytes,
+    );
+  }
+});
+
+test("everyone else is asked to sign in for a licensed run, and is sent nothing of it", async () => {
+  const bytes = documentBytes("licensed");
+  const licensed = collectorDocument({ bytes, visibility: "private" });
+  const collector = fakeCollector([licensed], {
+    [licensed.document_path]: bytes,
+  });
+  const metadata = await runMetadataResponse(
+    "run-1",
+    search(),
+    dependencies(collector),
+    anonymous,
+  );
+  expect(metadata.status).toBe(401);
+  expect(metadata.headers.get("cache-control")).toBe("no-store");
+  expect(await metadata.json()).toEqual({ error: "sign_in_required" });
+  // Without sign-in configured there is nothing to sign in to.
+  const unconfigured = await runMetadataResponse(
+    "run-1",
+    search(),
+    dependencies(collector),
+    { staffEmail: null, signInAvailable: false },
+  );
+  expect(unconfigured.status).toBe(404);
+  const file = await runFileResponse(
+    "run-1",
+    "graph.orrery.json",
+    search(`document=${licensed.submission_id}/${licensed.document_sha256}`),
+    dependencies(collector),
+    anonymous,
+  );
+  // A direct link to a licensed file asks for sign-in too.
+  expect(file.status).toBe(401);
+  expect(await file.json()).toEqual({ error: "sign_in_required" });
+  expect(file.headers.get("cache-control")).toBe("no-store");
+  const newest = await runFileResponse(
+    "run-1",
+    "graph.orrery.json",
+    search(),
+    dependencies(collector),
+    anonymous,
+  );
+  expect(newest.status).toBe(401);
+  const withoutSignIn = await runFileResponse(
+    "run-1",
+    "graph.orrery.json",
+    search(),
+    dependencies(collector),
+    { staffEmail: null, signInAvailable: false },
+  );
+  expect(withoutSignIn.status).toBe(404);
+  expect(collector.fetched).toEqual([]);
+});
+
+test("a run with public and private documents lists only the public ones to everyone else", async () => {
+  const licensed = collectorDocument({
+    bytes: documentBytes("licensed"),
+    visibility: "private",
+  });
+  const open = collectorDocument({
+    bytes: documentBytes("public"),
+    submission_id: `sub-${"4".repeat(32)}`,
+    created_at: "2026-11-01T09:00:00+00:00",
+  });
+  const collector = fakeCollector([licensed, open]);
+  const anonymousBody = await (
+    await runMetadataResponse(
+      "run-1",
+      search(),
+      dependencies(collector),
+      anonymous,
+    )
+  ).json();
+  expect(
+    anonymousBody.documents.map((d: CollectorDocument) => d.submission_id),
+  ).toEqual([open.submission_id]);
+  expect(anonymousBody.viewer).toEqual({
+    signed_in_as: null,
+    sign_in_available: true,
+  });
+  const staffBody = await (
+    await runMetadataResponse("run-1", search(), dependencies(collector), staff)
+  ).json();
+  expect(
+    staffBody.documents.map((d: CollectorDocument) => d.submission_id),
+  ).toEqual([licensed.submission_id, open.submission_id]);
+});
+
+test("a public document stays publicly cacheable when staff fetch it, and one turned private is staff-only", async () => {
+  const bytes = documentBytes("public");
+  const document = collectorDocument({ bytes });
+  const open = await runFileResponse(
+    "run-1",
+    "graph.orrery.json",
+    search(),
+    dependencies(
+      fakeCollector([document], { [document.document_path]: bytes }),
+    ),
+    staff,
+  );
+  expect(open.headers.get("cache-control")).toBe("public, max-age=300");
+  const turned = fakeCollector(
+    [document],
+    { [document.document_path]: bytes },
+    () => "private",
+  );
+  const forStaff = await runFileResponse(
+    "run-1",
+    "graph.orrery.json",
+    search(),
+    dependencies(turned),
+    staff,
+  );
+  expect(forStaff.status).toBe(200);
+  expect(forStaff.headers.get("cache-control")).toBe("private, no-store");
+  const forOthers = await runFileResponse(
+    "run-1",
+    "graph.orrery.json",
+    search(),
+    dependencies(turned),
+    anonymous,
+  );
+  expect(forOthers.status).toBe(404);
+});

@@ -1,4 +1,8 @@
-import { documentSelection, type RunMetadata } from "./run-metadata";
+import {
+  documentSelection,
+  signInHref,
+  type RunMetadata,
+} from "./run-metadata";
 
 export interface ProvenanceRow {
   label: string;
@@ -56,6 +60,13 @@ export function provenanceRows(metadata: RunMetadata): ProvenanceRow[] {
       label: "Current for its build",
       value: document.current ? "Yes" : "No: a newer document exists",
     },
+    {
+      label: "Visibility",
+      value:
+        document.visibility === "public"
+          ? "Public"
+          : "Private: licensed data, shown only to signed-in staff",
+    },
     { label: "Submission", value: document.submission_id },
     { label: "Recorded", value: formatTimestamp(document.created_at) },
     { label: "Document SHA-256", value: document.document_sha256 },
@@ -88,4 +99,16 @@ export function documentChoices(metadata: RunMetadata): DocumentChoice[] {
     current: document.current,
     reconstructed: document.reconstructed,
   }));
+}
+
+/** The sign-in link or signed-in account the viewer shows, or null without sign-in. */
+export function staffAccess(
+  metadata: RunMetadata,
+  path: string,
+): { signedInAs: string | null; signInHref: string | null } | null {
+  if (metadata.source !== "collector") return null;
+  if (metadata.viewer.signed_in_as)
+    return { signedInAs: metadata.viewer.signed_in_as, signInHref: null };
+  if (!metadata.viewer.sign_in_available) return null;
+  return { signedInAs: null, signInHref: signInHref(path) };
 }

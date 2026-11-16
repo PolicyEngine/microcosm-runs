@@ -3,6 +3,7 @@ import {
   documentChoices,
   isReconstructed,
   provenanceRows,
+  staffAccess,
 } from "../lib/provenance";
 import type { CollectorRunMetadata, RunMetadata } from "../lib/runs";
 
@@ -31,6 +32,7 @@ const older = {
 const collectorRun: CollectorRunMetadata = {
   source: "collector",
   publication_id: "run-1",
+  viewer: { signed_in_as: null, sign_in_available: true },
   document: newest,
   documents: [newest, older],
   files: [
@@ -54,6 +56,7 @@ test("a collector document's provenance names its run, build, submission, versio
     { label: "Run", value: "run-1" },
     { label: "Build", value: "GB · build-1" },
     { label: "Current for its build", value: "No: a newer document exists" },
+    { label: "Visibility", value: "Public" },
     { label: "Submission", value: newest.submission_id },
     { label: "Recorded", value: "2026-11-11 20:10 UTC" },
     { label: "Document SHA-256", value: newest.document_sha256 },
@@ -123,4 +126,44 @@ test("the run's other documents are listed with their dates and links that selec
       reconstructed: false,
     },
   ]);
+});
+
+test("a private document says it is shown only to signed-in staff", () => {
+  const licensed = {
+    ...collectorRun,
+    document: { ...newest, visibility: "private" as const },
+  };
+  expect(provenanceRows(licensed)).toContainEqual({
+    label: "Visibility",
+    value: "Private: licensed data, shown only to signed-in staff",
+  });
+});
+
+test("the viewer offers sign-in to everyone else, and names the signed-in account", () => {
+  const path = "/runs/run-1/?document=x";
+  expect(staffAccess(collectorRun, path)).toEqual({
+    signedInAs: null,
+    signInHref: `/api/auth/google/start/?next=${encodeURIComponent(path)}`,
+  });
+  expect(
+    staffAccess(
+      {
+        ...collectorRun,
+        viewer: {
+          signed_in_as: "staff@policyengine.org",
+          sign_in_available: true,
+        },
+      },
+      path,
+    ),
+  ).toEqual({ signedInAs: "staff@policyengine.org", signInHref: null });
+  expect(
+    staffAccess(
+      {
+        ...collectorRun,
+        viewer: { signed_in_as: null, sign_in_available: false },
+      },
+      path,
+    ),
+  ).toBeNull();
 });

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { encodeLocation, decodeLocation } from "@axiom-foundation/orrery";
-import { loadDocument, runPagePath } from "../lib/viewer";
+import { loadDocument, runPagePath, SignInRequired } from "../lib/viewer";
 import type { Fetcher } from "../lib/net";
 import { sha256 } from "../lib/contract";
 const document = {
@@ -185,6 +185,24 @@ test("viewer refuses collector graph routes of another run or with other query p
       loadDocument("run-1", new AbortController().signal, fetcher),
     ).rejects.toThrow("Invalid graph storage URL.");
   }
+});
+
+test("a licensed run asks the person to sign in, and comes back to the same page", async () => {
+  const fetcher = (async () =>
+    Response.json({ error: "sign_in_required" }, { status: 401 })) as Fetcher;
+  const failure = await loadDocument(
+    "run-1",
+    new AbortController().signal,
+    fetcher,
+    "?document=x",
+  ).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  expect(failure).toBeInstanceOf(SignInRequired);
+  expect((failure as SignInRequired).signInHref).toBe(
+    `/api/auth/google/start/?next=${encodeURIComponent("/runs/run-1/?document=x")}`,
+  );
 });
 
 test("the run page keeps its trailing slash, so relative upstream links stay inside the run", () => {
