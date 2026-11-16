@@ -1,44 +1,93 @@
 import { parseGraphDocument } from "@axiom-foundation/orrery";
-import type { Publication } from "./contract";
 import type { Fetcher } from "./net";
+import type { RunMetadata } from "./run-metadata";
+
+const invalidLocation = () => new Error("Invalid graph storage URL.");
+
+/**
+ * Where the graph may be fetched from: this app's own route for the run
+ * (a local development file, or a collector document named by its
+ * `document` selection), or public Blob storage.
+ */
+function graphSource(id: string, url: string): string | URL {
+  const route = `/runs/${encodeURIComponent(id)}/graph.orrery.json`;
+  if (url.startsWith("/") && !url.startsWith("//")) {
+    const base = "https://runs.invalid";
+    const parsed = new URL(url, base);
+    const keys = [...parsed.searchParams.keys()];
+    if (
+      parsed.origin !== base ||
+      parsed.pathname !== route ||
+      parsed.hash ||
+      keys.length > 1 ||
+      keys.some((key) => key !== "document")
+    )
+      throw invalidLocation();
+    return url;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw invalidLocation();
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    !parsed.hostname.endsWith(".public.blob.vercel-storage.com") ||
+    parsed.username ||
+    parsed.password
+  )
+    throw invalidLocation();
+  return parsed;
+}
+
+/**
+ * The run page's path with its trailing slash. Next.js redirects
+ * `/runs/<id>/` to `/runs/<id>` when the ID ends like a file name (such as
+ * `.stage1`), and Orrery's relative `upstream-<sha256>.json` links would then
+ * resolve outside the run.
+ */
+export function runPagePath(pathname: string): string {
+  return pathname.endsWith("/") ? pathname : `${pathname}/`;
+}
+
+const SOURCES = new Set(["publication", "local", "collector"]);
 
 export async function loadDocument(
   id: string,
   signal: AbortSignal,
   fetcher: Fetcher = fetch,
+  /** The page's query string; its `document` selects a collector document. */
+  search = "",
 ) {
-  const response = await fetcher(`/api/runs/${encodeURIComponent(id)}/`, {
-    signal,
-  });
+  const selection = new URLSearchParams(search).get("document");
+  const response = await fetcher(
+    `/api/runs/${encodeURIComponent(id)}/${
+      selection ? `?document=${encodeURIComponent(selection)}` : ""
+    }`,
+    { signal },
+  );
   if (response.status === 404)
     throw new Error("This graph publication was not found.");
   if (!response.ok)
     throw new Error("Graph publication metadata is unavailable.");
-  const publication: Publication = await response.json();
-  const file = publication.files?.find(
-    (f) => f.role === "graph" && f.name === "graph.orrery.json",
-  );
+  const metadata: RunMetadata = await response.json();
+  // Publication store metadata cached before sources were named has none.
+  (metadata as { source?: string }).source ??= "publication";
   if (
-    !file ||
-    publication.publication_id !== id ||
-    file.bytes > 64 * 1024 * 1024
+    !SOURCES.has(metadata.source) ||
+    (metadata.source === "collector" &&
+      (typeof metadata.document !== "object" ||
+        metadata.document === null ||
+        !Array.isArray(metadata.documents)))
   )
     throw new Error("Invalid graph publication metadata.");
-  // A local development server serves the graph from this app's own route;
-  // otherwise only public Blob storage is accepted.
-  const local = `/runs/${encodeURIComponent(id)}/graph.orrery.json`;
-  let source: string | URL = local;
-  if (file.url !== local) {
-    const url = new URL(file.url);
-    if (
-      url.protocol !== "https:" ||
-      !url.hostname.endsWith(".public.blob.vercel-storage.com") ||
-      url.username ||
-      url.password
-    )
-      throw new Error("Invalid graph storage URL.");
-    source = url;
-  }
+  const file = metadata.files?.find(
+    (f) => f.role === "graph" && f.name === "graph.orrery.json",
+  );
+  if (!file || metadata.publication_id !== id || file.bytes > 64 * 1024 * 1024)
+    throw new Error("Invalid graph publication metadata.");
+  const source = graphSource(id, file.url);
   const graph = await fetcher(source, { signal });
   if (!graph.ok || !graph.body)
     throw new Error("The stored graph is unavailable.");
@@ -76,5 +125,6 @@ export async function loadDocument(
       JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
     ),
     digest,
+    metadata,
   };
 }

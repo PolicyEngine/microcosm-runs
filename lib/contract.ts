@@ -37,12 +37,41 @@ export class ApiError extends Error {
   }
 }
 export function publicationId(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value)
-  )
+  if (typeof value !== "string" || !isPublicationId(value))
     throw new ApiError(400, "invalid_publication_id");
   return value;
+}
+/** A publication ID is also a valid run ID; a run ID may hold `.` and `:`. */
+export function isPublicationId(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
+}
+/** A telemetry run ID, as the collector accepts one. */
+export function runId(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(value)
+  )
+    throw new ApiError(400, "invalid_run_id");
+  return value;
+}
+/**
+ * The run ID of a page's `[id]` param, or null for an invalid one. Next.js 16
+ * passes page params URL-encoded (`getParamValue` applies
+ * `encodeURIComponent`), unlike route handlers' params, so a run ID with `:`
+ * arrives as `%3A`. Run IDs hold no `%`, so decoding an already decoded ID
+ * changes nothing.
+ */
+export function runIdFromPage(
+  value: string,
+  /** Whether collector reads are on; without them only publication IDs open. */
+  collectorReads: boolean,
+): string | null {
+  try {
+    const id = decodeURIComponent(value);
+    return collectorReads ? runId(id) : publicationId(id);
+  } catch {
+    return null;
+  }
 }
 const roleNames: Record<FileRole, RegExp> = {
   graph: /^graph\.orrery\.json$/,
