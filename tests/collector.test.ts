@@ -294,3 +294,25 @@ test("a read service cursor is base64url of at most 256 characters", () => {
   for (const cursor of ["", "a".repeat(257), "not/base64url", "a b", "a=", "é"])
     expect(isCollectorCursor(cursor)).toBe(false);
 });
+
+test("a cursor the read service refuses is a bad request, not an unavailable read service", async () => {
+  const { fetcher } = recordingFetcher(() =>
+    Response.json(
+      {
+        detail: "before is not a cursor this listing gave.",
+        code: "orrery_graph_query_invalid",
+      },
+      { status: 422 },
+    ),
+  );
+
+  await expect(reader(fetcher).recent("AAAA")).rejects.toMatchObject({
+    status: 400,
+    code: "invalid_cursor",
+  });
+  // Without a cursor, a 422 means the read service has no such listing yet.
+  await expect(reader(fetcher).recent(null)).rejects.toMatchObject({
+    status: 503,
+    code: "collector_unavailable",
+  });
+});

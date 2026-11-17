@@ -1,6 +1,11 @@
 import { parseGraphDocument } from "@axiom-foundation/orrery";
 import type { Fetcher } from "./net";
-import { signInHref, type RunListPage, type RunMetadata } from "./run-metadata";
+import {
+  signInHref,
+  type RunListEntry,
+  type RunListPage,
+  type RunMetadata,
+} from "./run-metadata";
 
 const invalidLocation = () => new Error("Invalid graph storage URL.");
 
@@ -76,6 +81,19 @@ export async function loadRunList(
   const page: unknown = await response.json().catch(() => null);
   if (!isRunListPage(page)) throw new Error("Invalid run list.");
   return page;
+}
+
+/**
+ * The run list after more pages: `runs` with the next page's runs it doesn't
+ * hold yet, or null when this deployment has no run list.
+ */
+export async function loadMoreRuns(
+  runs: RunListEntry[],
+  before: string | null,
+  signal: AbortSignal,
+  fetcher: Fetcher = fetch,
+): Promise<RunListPage | null> {
+  return null;
 }
 
 /** A run ID, as the collector accepts one (`runId` in `lib/contract.ts`). */

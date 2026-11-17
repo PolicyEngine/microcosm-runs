@@ -770,3 +770,55 @@ test("a run list the read service can't give answers 503", async () => {
     error: "invalid_collector_response",
   });
 });
+
+test("for a signed-out visitor, the run list reads on past pages of private documents", async () => {
+  const { newest, otherRun } = runListDocuments;
+  const privateDocument = { ...newest, visibility: "private" as const };
+  const collector = fakeCollector([], {}, () => "public", {
+    "": { documents: [privateDocument], next_before: "cursor-1" },
+    "cursor-1": { documents: [privateDocument], next_before: "cursor-2" },
+    "cursor-2": { documents: [otherRun], next_before: "cursor-3" },
+  });
+
+  const page = await (
+    await runListResponse(search(), dependencies(collector), anonymous)
+  ).json();
+
+  expect(page.runs.map((run: { run_id: string }) => run.run_id)).toEqual([
+    "uk-run.stage:2",
+  ]);
+  expect(page.next_before).toBe("cursor-3");
+  expect(collector.pagesAsked).toEqual([null, "cursor-1", "cursor-2"]);
+});
+
+test("one run list answer reads at most four pages of the read service", async () => {
+  const privateDocument = {
+    ...runListDocuments.newest,
+    visibility: "private" as const,
+  };
+  const cursors = ["", "cursor-1", "cursor-2", "cursor-3", "cursor-4"];
+  const collector = fakeCollector(
+    [],
+    {},
+    () => "public",
+    Object.fromEntries(
+      cursors.map((before, index) => [
+        before,
+        { documents: [privateDocument], next_before: `cursor-${index + 1}` },
+      ]),
+    ),
+  );
+
+  const page = await (
+    await runListResponse(search(), dependencies(collector), anonymous)
+  ).json();
+
+  expect(page.runs).toEqual([]);
+  expect(page.next_before).toBe("cursor-4");
+  expect(collector.pagesAsked).toEqual([
+    null,
+    "cursor-1",
+    "cursor-2",
+    "cursor-3",
+  ]);
+});

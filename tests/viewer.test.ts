@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { encodeLocation, decodeLocation } from "@axiom-foundation/orrery";
 import {
   loadDocument,
+  loadMoreRuns,
   loadRunList,
   runPagePath,
   SignInRequired,
@@ -329,4 +330,95 @@ test("more runs add only those not already listed, and dates show to the minute 
     "2026-11-12 09:05 UTC",
   );
   expect(runListDate("2026-11-12T10:05:00+01:00")).toBe("2026-11-12 09:05 UTC");
+});
+
+function runListEntry(run_id: string): RunListEntry {
+  return {
+    run_id,
+    build_id: "build",
+    country_code: "GB",
+    created_at: "2026-11-11T09:00:00+00:00",
+    reconstructed: false,
+  };
+}
+
+/** A run list route that answers these pages by their `before`. */
+function runListRoute(pages: Record<string, unknown>) {
+  const asked: (string | null)[] = [];
+  const fetcher = (async (url) => {
+    const before = new URL(
+      String(url),
+      "https://runs.invalid",
+    ).searchParams.get("before");
+    asked.push(before);
+    return Response.json(pages[before ?? ""]);
+  }) as Fetcher;
+  return { asked, fetcher };
+}
+
+const viewer = { signed_in_as: null, sign_in_available: true };
+
+test("more runs read on until a page adds a run not already listed", async () => {
+  const { asked, fetcher } = runListRoute({
+    "cursor-0": {
+      viewer,
+      runs: [runListEntry("run-a")],
+      next_before: "cursor-1",
+    },
+    "cursor-1": {
+      viewer,
+      runs: [runListEntry("run-b")],
+      next_before: "cursor-2",
+    },
+  });
+
+  const more = await loadMoreRuns(
+    [runListEntry("run-a")],
+    "cursor-0",
+    new AbortController().signal,
+    fetcher,
+  );
+
+  expect(more?.runs.map((run) => run.run_id)).toEqual(["run-a", "run-b"]);
+  expect(more?.next_before).toBe("cursor-2");
+  expect(asked).toEqual(["cursor-0", "cursor-1"]);
+});
+
+test("more runs make at most three requests, and stop at the last page", async () => {
+  const repeating = (next_before: string | null) => ({
+    viewer,
+    runs: [runListEntry("run-a")],
+    next_before,
+  });
+  const endless = runListRoute({
+    "": repeating("cursor-1"),
+    "cursor-1": repeating("cursor-2"),
+    "cursor-2": repeating("cursor-3"),
+    "cursor-3": repeating("cursor-4"),
+  });
+  const ending = runListRoute({ "": repeating(null) });
+  const signal = new AbortController().signal;
+
+  const capped = await loadMoreRuns(
+    [runListEntry("run-a")],
+    null,
+    signal,
+    endless.fetcher,
+  );
+  const ended = await loadMoreRuns(
+    [runListEntry("run-a")],
+    null,
+    signal,
+    ending.fetcher,
+  );
+
+  expect(capped?.runs.map((run) => run.run_id)).toEqual(["run-a"]);
+  expect(capped?.next_before).toBe("cursor-3");
+  expect(endless.asked).toEqual([null, "cursor-1", "cursor-2"]);
+  expect(ended?.next_before).toBeNull();
+  expect(ending.asked).toEqual([null]);
+  expect(
+    await loadMoreRuns([], null, signal, (async () =>
+      Response.json({}, { status: 404 })) as unknown as Fetcher),
+  ).toBeNull();
 });
