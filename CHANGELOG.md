@@ -1,3 +1,10 @@
+## [0.5.0] - 2026-11-17
+
+### Added
+
+- The homepage lists the runs the collector holds Orrery graph files for, newest first, with each run's build, country and date: every run for signed-in staff, and runs with public documents, plus a Google sign-in link, for everyone else.
+
+
 ## [0.4.0] - 2026-11-16
 
 ### Added
