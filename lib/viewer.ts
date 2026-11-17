@@ -86,8 +86,10 @@ export async function loadRunList(
 }
 
 /**
- * The run list after more pages: `runs` with the next page's runs it doesn't
- * hold yet, or null when this deployment has no run list.
+ * The run list after more pages: `runs` with the next pages' runs it doesn't
+ * hold yet, or null when this deployment has no run list. It rejects only
+ * when the first request fails; after a later failure it resolves with the
+ * runs already read, whose `next_before` is the failed request's cursor.
  */
 export async function loadMoreRuns(
   runs: RunListEntry[],
@@ -126,7 +128,7 @@ export async function loadMoreRuns(
   return result;
 }
 
-/** The most run list requests one "More runs" makes. */
+/** The most run list requests one "More runs", or the first load, makes. */
 export const MORE_RUN_REQUESTS = 3;
 
 function isRunListPage(value: unknown): value is RunListPage {
