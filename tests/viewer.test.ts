@@ -1,6 +1,16 @@
 import { expect, test } from "bun:test";
 import { encodeLocation, decodeLocation } from "@axiom-foundation/orrery";
-import { loadDocument, runPagePath, SignInRequired } from "../lib/viewer";
+import {
+  loadDocument,
+  loadRunList,
+  runPagePath,
+  SignInRequired,
+} from "../lib/viewer";
+import {
+  appendRuns,
+  runListDate,
+  type RunListEntry,
+} from "../lib/run-metadata";
 import type { Fetcher } from "../lib/net";
 import { sha256 } from "../lib/contract";
 const document = {
@@ -239,4 +249,84 @@ test("metadata without a source is a publication store record, and collector met
       loadDocument("graph", new AbortController().signal, (async () =>
         Response.json(metadata)) as Fetcher),
     ).rejects.toThrow("Invalid graph publication metadata.");
+});
+
+const runListPage = {
+  viewer: { signed_in_as: null, sign_in_available: true },
+  runs: [
+    {
+      run_id: "uk-run.stage:2",
+      build_id: "build-b",
+      country_code: "GB",
+      created_at: "2026-11-11T09:00:00+00:00",
+      reconstructed: false,
+    },
+  ],
+  next_before: "abc_-1",
+};
+
+test("the run list loads a page of runs, and the next one from its cursor", async () => {
+  const calls: string[] = [];
+  const fetcher = (async (url) => {
+    calls.push(String(url));
+    return Response.json(runListPage);
+  }) as Fetcher;
+  const signal = new AbortController().signal;
+
+  expect(await loadRunList(null, signal, fetcher)).toEqual(runListPage);
+  expect(await loadRunList("abc_-1", signal, fetcher)).toEqual(runListPage);
+  expect(calls).toEqual(["/api/runs/", "/api/runs/?before=abc_-1"]);
+});
+
+test("a deployment without a run list gives none, and a bad run list answer is refused", async () => {
+  const answering = (response: Response) =>
+    (async () => response.clone()) as unknown as Fetcher;
+  const signal = new AbortController().signal;
+
+  expect(
+    await loadRunList(
+      null,
+      signal,
+      answering(Response.json({ error: "not_found" }, { status: 404 })),
+    ),
+  ).toBeNull();
+  const bad: unknown[] = [
+    { ...runListPage, runs: "none" },
+    { ...runListPage, next_before: 5 },
+    { ...runListPage, viewer: null },
+    { ...runListPage, runs: [{ ...runListPage.runs[0], run_id: "a b" }] },
+    { ...runListPage, runs: [{ ...runListPage.runs[0], reconstructed: "no" }] },
+    { ...runListPage, runs: [{ ...runListPage.runs[0], build_id: 1 }] },
+  ];
+  for (const answer of bad)
+    await expect(
+      loadRunList(null, signal, answering(Response.json(answer))),
+    ).rejects.toThrow("Invalid run list.");
+  await expect(
+    loadRunList(
+      null,
+      signal,
+      answering(Response.json({ error: "x" }, { status: 503 })),
+    ),
+  ).rejects.toThrow("The run list is unavailable.");
+});
+
+test("more runs add only those not already listed, and dates show to the minute in UTC", () => {
+  const run = (run_id: string): RunListEntry => ({
+    run_id,
+    build_id: "build",
+    country_code: "GB",
+    created_at: "2026-11-11T09:00:00+00:00",
+    reconstructed: false,
+  });
+
+  expect(
+    appendRuns([run("a"), run("b")], [run("b"), run("c")]).map(
+      (entry) => entry.run_id,
+    ),
+  ).toEqual(["a", "b", "c"]);
+  expect(runListDate("2026-11-12T09:05:59.999+00:00")).toBe(
+    "2026-11-12 09:05 UTC",
+  );
+  expect(runListDate("2026-11-12T10:05:00+01:00")).toBe("2026-11-12 09:05 UTC");
 });

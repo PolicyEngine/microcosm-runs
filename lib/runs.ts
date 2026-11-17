@@ -257,6 +257,18 @@ export async function runMetadataResponse(
 }
 
 /**
+ * `GET /api/runs/`: a page of the runs the collector holds graph documents
+ * for, newest first.
+ */
+export async function runListResponse(
+  search: URLSearchParams,
+  dependencies: RunDependencies,
+  access: RequestAccess = NO_ACCESS,
+): Promise<Response> {
+  return notFound();
+}
+
+/**
  * `GET /runs/{id}/{filename}`: one file of a run or publication.
  *
  * From the collector, `graph.orrery.json` is the selected document's (or the

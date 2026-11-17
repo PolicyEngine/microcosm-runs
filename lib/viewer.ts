@@ -1,6 +1,6 @@
 import { parseGraphDocument } from "@axiom-foundation/orrery";
 import type { Fetcher } from "./net";
-import { signInHref, type RunMetadata } from "./run-metadata";
+import { signInHref, type RunListPage, type RunMetadata } from "./run-metadata";
 
 const invalidLocation = () => new Error("Invalid graph storage URL.");
 
@@ -56,6 +56,18 @@ function graphSource(id: string, url: string): string | URL {
  */
 export function runPagePath(pathname: string): string {
   return pathname.endsWith("/") ? pathname : `${pathname}/`;
+}
+
+/**
+ * A page of the homepage's run list, or null when this deployment has none
+ * (collector reads off).
+ */
+export async function loadRunList(
+  before: string | null,
+  signal: AbortSignal,
+  fetcher: Fetcher = fetch,
+): Promise<RunListPage | null> {
+  return null;
 }
 
 const SOURCES = new Set(["publication", "local", "collector"]);

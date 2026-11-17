@@ -1,8 +1,14 @@
 import { expect, test } from "bun:test";
 import { sha256, type Publication } from "../lib/contract";
-import type { CollectorDocument, CollectorReader } from "../lib/collector";
+import { ApiError } from "../lib/contract";
+import type {
+  CollectorDocument,
+  CollectorPage,
+  CollectorReader,
+} from "../lib/collector";
 import {
   runFileResponse,
+  runListResponse,
   runMetadataResponse,
   type PublicationReader,
   type RunDependencies,
@@ -39,19 +45,36 @@ const publications: PublicationReader = {
 interface FakeCollector extends CollectorReader {
   listed: string[];
   fetched: string[];
+  /** The `before` of each page of every run's documents asked for. */
+  pagesAsked: (string | null)[];
 }
 
-/** A read service holding these documents and these file bytes by path. */
+/**
+ * A read service holding these documents and these file bytes by path. Its
+ * listing of every run's documents gives `pages`, by the `before` that asks
+ * for each (`""` for the first); by default, all the documents on one page.
+ */
 function fakeCollector(
   documents: CollectorDocument[],
   files: Record<string, Uint8Array> = {},
   visibility: (path: string) => "public" | "private" = () => "public",
+  pages: Record<string, CollectorPage> = {
+    "": { documents, next_before: null },
+  },
 ): FakeCollector {
   const listed: string[] = [];
   const fetched: string[] = [];
+  const pagesAsked: (string | null)[] = [];
   return {
     listed,
     fetched,
+    pagesAsked,
+    async recent(before) {
+      pagesAsked.push(before);
+      const page = pages[before ?? ""];
+      if (!page) throw new ApiError(503, "invalid_collector_response");
+      return page;
+    },
     async list(runId) {
       listed.push(runId);
       return documents.filter((document) => document.run_id === runId);
@@ -570,4 +593,178 @@ test("a public document stays publicly cacheable when staff fetch it, and one tu
     anonymous,
   );
   expect(forOthers.status).toBe(404);
+});
+
+// The homepage's run list.
+
+const runListDocuments = {
+  newest: collectorDocument({
+    bytes: documentBytes("run-a newest"),
+    submission_id: `sub-${"3".repeat(32)}`,
+    run_id: "run-a",
+    build_id: "build-a",
+    created_at: "2026-11-12T09:00:00+00:00",
+    reconstructed: true,
+  }),
+  otherRun: collectorDocument({
+    bytes: documentBytes("other run"),
+    submission_id: `sub-${"2".repeat(32)}`,
+    run_id: "uk-run.stage:2",
+    build_id: "build-b",
+    country_code: "US",
+    created_at: "2026-11-11T09:00:00+00:00",
+  }),
+  older: collectorDocument({
+    bytes: documentBytes("run-a older"),
+    submission_id: `sub-${"1".repeat(32)}`,
+    run_id: "run-a",
+    build_id: "build-a",
+    created_at: "2026-11-10T09:00:00+00:00",
+    current: false,
+  }),
+};
+
+test("the run list shows each run once, with its newest document's build, country and date", async () => {
+  const { newest, otherRun, older } = runListDocuments;
+  const collector = fakeCollector([newest, otherRun, older]);
+
+  const response = await runListResponse(
+    search(),
+    dependencies(collector),
+    anonymous,
+  );
+
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await response.json()).toEqual({
+    viewer: { signed_in_as: null, sign_in_available: true },
+    runs: [
+      {
+        run_id: "run-a",
+        build_id: "build-a",
+        country_code: "GB",
+        created_at: "2026-11-12T09:00:00+00:00",
+        reconstructed: true,
+      },
+      {
+        run_id: "uk-run.stage:2",
+        build_id: "build-b",
+        country_code: "US",
+        created_at: "2026-11-11T09:00:00+00:00",
+        reconstructed: false,
+      },
+    ],
+    next_before: null,
+  });
+  expect(collector.pagesAsked).toEqual([null]);
+});
+
+test("signed-out visitors see only runs with public documents; staff see every run, never cached", async () => {
+  const { newest, otherRun, older } = runListDocuments;
+  const privateNewest = { ...newest, visibility: "private" as const };
+  const privateRun = { ...otherRun, visibility: "private" as const };
+  const collector = fakeCollector([privateNewest, privateRun, older]);
+
+  const signedOut = await runListResponse(
+    search(),
+    dependencies(collector),
+    anonymous,
+  );
+  const signedIn = await runListResponse(
+    search(),
+    dependencies(collector),
+    staff,
+  );
+
+  expect(signedOut.headers.get("cache-control")).toBe("no-store");
+  // Run A appears with its older public document, and nothing of the private
+  // newest one.
+  expect((await signedOut.json()).runs).toEqual([
+    {
+      run_id: "run-a",
+      build_id: "build-a",
+      country_code: "GB",
+      created_at: "2026-11-10T09:00:00+00:00",
+      reconstructed: false,
+    },
+  ]);
+  expect(signedIn.headers.get("cache-control")).toBe("private, no-store");
+  const staffPage = await signedIn.json();
+  expect(staffPage.viewer).toEqual({
+    signed_in_as: "staff@policyengine.org",
+    sign_in_available: true,
+  });
+  expect(
+    staffPage.runs.map(
+      (run: { run_id: string; created_at: string }) =>
+        `${run.run_id} ${run.created_at}`,
+    ),
+  ).toEqual([
+    "run-a 2026-11-12T09:00:00+00:00",
+    "uk-run.stage:2 2026-11-11T09:00:00+00:00",
+  ]);
+});
+
+test("the run list's next page starts at the read service's cursor", async () => {
+  const { newest, otherRun } = runListDocuments;
+  const collector = fakeCollector([newest, otherRun], {}, () => "public", {
+    "": { documents: [newest], next_before: "cursor-1" },
+    "cursor-1": { documents: [otherRun], next_before: null },
+  });
+
+  const first = await (
+    await runListResponse(search(), dependencies(collector), anonymous)
+  ).json();
+  const second = await (
+    await runListResponse(
+      search("before=cursor-1"),
+      dependencies(collector),
+      anonymous,
+    )
+  ).json();
+
+  expect(first.runs.map((run: { run_id: string }) => run.run_id)).toEqual([
+    "run-a",
+  ]);
+  expect(first.next_before).toBe("cursor-1");
+  expect(second.runs.map((run: { run_id: string }) => run.run_id)).toEqual([
+    "uk-run.stage:2",
+  ]);
+  expect(second.next_before).toBeNull();
+  expect(collector.pagesAsked).toEqual([null, "cursor-1"]);
+});
+
+test("a malformed run list cursor is refused, and without collector reads there is no run list", async () => {
+  const collector = fakeCollector([runListDocuments.newest]);
+
+  const malformed = await runListResponse(
+    search("before=not%2Fa%20cursor"),
+    dependencies(collector),
+  );
+  const collectorOff = await runListResponse(search(), dependencies(null));
+  const local = await runListResponse(search(), {
+    ...dependencies(collector),
+    local: { read: async () => null } as unknown as RunDependencies["local"],
+  });
+
+  expect(malformed.status).toBe(400);
+  expect(await malformed.json()).toEqual({ error: "invalid_cursor" });
+  expect(collector.pagesAsked).toEqual([]);
+  expect(collectorOff.status).toBe(404);
+  expect(local.status).toBe(404);
+});
+
+test("a run list the read service can't give answers 503", async () => {
+  const collector = fakeCollector([], {}, () => "public", {});
+
+  const response = await runListResponse(
+    search(),
+    dependencies(collector),
+    anonymous,
+  );
+
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({
+    error: "invalid_collector_response",
+  });
 });

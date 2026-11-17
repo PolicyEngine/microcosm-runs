@@ -29,6 +29,35 @@ export interface CollectorRunMetadata {
 export type RunMetadata =
   (Publication & { source: "publication" | "local" }) | CollectorRunMetadata;
 
+/** One run of the homepage's list: its newest document this viewer may see. */
+export interface RunListEntry {
+  run_id: string;
+  build_id: string;
+  country_code: string;
+  created_at: string;
+  reconstructed: boolean;
+}
+/** `GET /api/runs/`: one page of the run list, newest first. */
+export interface RunListPage {
+  viewer: ViewerAccess;
+  runs: RunListEntry[];
+  /** Pass as `before` for the next page; null on the last one. */
+  next_before: string | null;
+}
+
+/** `existing` followed by the runs of `incoming` it doesn't already hold. */
+export function appendRuns(
+  existing: RunListEntry[],
+  incoming: RunListEntry[],
+): RunListEntry[] {
+  return existing;
+}
+
+/** A run list date, to the minute in UTC: `2026-11-12 09:00 UTC`. */
+export function runListDate(createdAt: string): string {
+  return createdAt;
+}
+
 /** The `document` query value that selects this document. */
 export function documentSelection(
   document: Pick<CollectorDocument, "submission_id" | "document_sha256">,

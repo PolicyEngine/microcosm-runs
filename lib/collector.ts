@@ -39,9 +39,21 @@ export interface CollectorDocument {
   document_path: string;
   upstream_paths: string[];
 }
+/** One page of the read service's listing of every run's documents. */
+export interface CollectorPage {
+  /** Public and private, newest first. */
+  documents: CollectorDocument[];
+  /** The read service's cursor for the next page; null on the last one. */
+  next_before: string | null;
+}
 export interface CollectorReader {
   /** Every recorded document of the run, public or private, newest first. */
   list(runId: string): Promise<CollectorDocument[]>;
+  /**
+   * One page of every run's documents, newest first, after the page whose
+   * `next_before` is `before`, or the first page.
+   */
+  recent(before: string | null): Promise<CollectorPage>;
   /**
    * One served file whose body has the expected SHA-256 and matches the
    * `ETag`, or null when the read service has no such file.
@@ -58,6 +70,12 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const SUBMISSION_ID = /^sub-[0-9a-f]{32}$/;
 const FILE_PATH =
   /^\/v1\/orrery-graphs\/sub-[0-9a-f]{32}\/[0-9a-f]{64}\/(?:graph\.orrery\.json|upstream-[0-9a-f]{64}\.json)$/;
+/** The most documents one page of the read service's listing holds. */
+export const RECENT_PAGE_DOCUMENTS = 50;
+/** Whether `value` has the shape of the read service's page cursors. */
+export function isCollectorCursor(value: string): boolean {
+  return false;
+}
 /** An upstream file's name; its capture is the file's SHA-256. */
 export const UPSTREAM_FILE_NAME = /^upstream-([0-9a-f]{64})\.json$/;
 const BUILD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -239,6 +257,9 @@ export function createCollectorReader(
     }
   }
   return {
+    async recent() {
+      return { documents: [], next_before: null };
+    },
     async list(runId) {
       const response = await get(
         `${GRAPHS_PATH}?${new URLSearchParams({ run_id: runId })}`,
