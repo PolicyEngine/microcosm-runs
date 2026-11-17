@@ -67,7 +67,43 @@ export async function loadRunList(
   signal: AbortSignal,
   fetcher: Fetcher = fetch,
 ): Promise<RunListPage | null> {
-  return null;
+  const response = await fetcher(
+    `/api/runs/${before === null ? "" : `?before=${encodeURIComponent(before)}`}`,
+    { signal },
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error("The run list is unavailable.");
+  const page: unknown = await response.json().catch(() => null);
+  if (!isRunListPage(page)) throw new Error("Invalid run list.");
+  return page;
+}
+
+/** A run ID, as the collector accepts one (`runId` in `lib/contract.ts`). */
+const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
+
+function isRunListPage(value: unknown): value is RunListPage {
+  if (!value || typeof value !== "object") return false;
+  const { viewer, runs, next_before } = value as Record<string, unknown>;
+  if (!viewer || typeof viewer !== "object") return false;
+  const { signed_in_as, sign_in_available } = viewer as Record<string, unknown>;
+  return (
+    (signed_in_as === null || typeof signed_in_as === "string") &&
+    typeof sign_in_available === "boolean" &&
+    (next_before === null || typeof next_before === "string") &&
+    Array.isArray(runs) &&
+    runs.every((run) => {
+      if (!run || typeof run !== "object") return false;
+      const entry = run as Record<string, unknown>;
+      return (
+        typeof entry.run_id === "string" &&
+        RUN_ID.test(entry.run_id) &&
+        typeof entry.build_id === "string" &&
+        typeof entry.country_code === "string" &&
+        typeof entry.created_at === "string" &&
+        typeof entry.reconstructed === "boolean"
+      );
+    })
+  );
 }
 
 const SOURCES = new Set(["publication", "local", "collector"]);

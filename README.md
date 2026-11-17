@@ -117,6 +117,28 @@ set to `collector`, this app reads from it first:
   deployment offers no sign-in). Each served file's visibility is checked
   again when it is fetched: one the read service now marks `private` goes
   only to staff.
+- **Run list.** The homepage lists the runs the collector holds documents
+  for, newest first, from `GET /api/runs/`. That route reads the read
+  service's listing without a run or build ID (microcosm-collector#70), 50
+  documents at a time.
+  - **Rows:** one per run, from its newest document on the page that this
+    viewer may see. Each row shows the run ID, linking to its page, the
+    build ID, the country code and the date, and is marked "Reconstructed"
+    when that document is.
+  - **Who sees what:** staff see every run. Everyone else sees runs with a
+    `public` document, plus "Sign in with Google" where this deployment
+    offers sign-in.
+  - **More runs:** "More runs" asks `GET /api/runs/?before=<next_before>`.
+    `next_before` is the read service's own cursor, passed through
+    unchanged. It holds the last listed document's time, SHA-256 and
+    submission ID, so a signed-out visitor can read those three values for
+    one private document per page, but never its run, its build or its
+    contents.
+  - **Caching:** answers are `no-store`, and `private, no-store` for staff.
+  - **Without a list:** with collector reads off, or a local directory, the
+    route answers 404, and the homepage shows its heading alone. It does
+    the same when the read service can't give the list, for example before
+    it has the listing.
 - **Checks.** The server reads each file whole, keeping the parts as they
   arrive and hashing them on the way, at most the listed size for a document
   and 64 MiB for an upstream file, and sends it only if the

@@ -45,12 +45,13 @@ export function publicationId(value: unknown): string {
 export function isPublicationId(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
 }
+/** Whether `value` is a telemetry run ID, as the collector accepts one. */
+export function isRunId(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(value);
+}
 /** A telemetry run ID, as the collector accepts one. */
 export function runId(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(value)
-  )
+  if (typeof value !== "string" || !isRunId(value))
     throw new ApiError(400, "invalid_run_id");
   return value;
 }

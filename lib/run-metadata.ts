@@ -50,12 +50,23 @@ export function appendRuns(
   existing: RunListEntry[],
   incoming: RunListEntry[],
 ): RunListEntry[] {
-  return existing;
+  // A run whose documents fall on two pages is listed once, where its newest
+  // visible document put it.
+  const listed = new Set(existing.map((run) => run.run_id));
+  const added = incoming.filter((run) => {
+    if (listed.has(run.run_id)) return false;
+    listed.add(run.run_id);
+    return true;
+  });
+  return [...existing, ...added];
 }
 
 /** A run list date, to the minute in UTC: `2026-11-12 09:00 UTC`. */
 export function runListDate(createdAt: string): string {
-  return createdAt;
+  const date = new Date(createdAt);
+  return Number.isNaN(date.getTime())
+    ? createdAt
+    : `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 
 /** The `document` query value that selects this document. */

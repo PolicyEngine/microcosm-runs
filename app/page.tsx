@@ -1,3 +1,4 @@
+import RunList from "@/components/RunList";
 export default function Home() {
   return (
     <main className="mx-auto max-w-content p-8 text-foreground">
@@ -6,6 +7,7 @@ export default function Home() {
         Open a graph publication link to explore its pipeline and recorded
         execution evidence with Orrery.
       </p>
+      <RunList />
     </main>
   );
 }

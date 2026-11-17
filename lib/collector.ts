@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ApiError, MAX_FILE_BYTES } from "./contract";
+import { ApiError, isRunId, MAX_FILE_BYTES } from "./contract";
 import type { Fetcher } from "./net";
 
 /**
@@ -72,9 +72,12 @@ const FILE_PATH =
   /^\/v1\/orrery-graphs\/sub-[0-9a-f]{32}\/[0-9a-f]{64}\/(?:graph\.orrery\.json|upstream-[0-9a-f]{64}\.json)$/;
 /** The most documents one page of the read service's listing holds. */
 export const RECENT_PAGE_DOCUMENTS = 50;
-/** Whether `value` has the shape of the read service's page cursors. */
+/**
+ * Whether `value` has the shape of the read service's page cursors: unpadded
+ * base64url, and no longer than the read service accepts.
+ */
 export function isCollectorCursor(value: string): boolean {
-  return false;
+  return /^[A-Za-z0-9_-]{1,256}$/.test(value);
 }
 /** An upstream file's name; its capture is the file's SHA-256. */
 export const UPSTREAM_FILE_NAME = /^upstream-([0-9a-f]{64})\.json$/;
@@ -141,8 +144,11 @@ function text(value: unknown): string {
   return value;
 }
 
-/** Check one listed document against the read service's contract. */
-function listedDocument(raw: unknown, runId: string): CollectorDocument {
+/**
+ * Check one listed document against the read service's contract: of run
+ * `runId`, or of any run when it is null.
+ */
+function listedDocument(raw: unknown, runId: string | null): CollectorDocument {
   if (!raw || typeof raw !== "object") throw invalid();
   const entry = raw as Record<string, unknown>;
   const submission_id = text(entry.submission_id);
@@ -154,7 +160,9 @@ function listedDocument(raw: unknown, runId: string): CollectorDocument {
   if (
     !SUBMISSION_ID.test(submission_id) ||
     !SHA256.test(document_sha256) ||
-    entry.run_id !== runId ||
+    (runId === null
+      ? typeof entry.run_id !== "string" || !isRunId(entry.run_id)
+      : entry.run_id !== runId) ||
     !BUILD_ID.test(build_id) ||
     !COUNTRY_CODE.test(country_code) ||
     !TIMESTAMP.test(created_at) ||
@@ -179,7 +187,7 @@ function listedDocument(raw: unknown, runId: string): CollectorDocument {
     submission_id,
     document_sha256,
     document_bytes: entry.document_bytes as number,
-    run_id: runId,
+    run_id: entry.run_id as string,
     build_id,
     country_code,
     orrery_version: text(entry.orrery_version),
@@ -256,31 +264,52 @@ export function createCollectorReader(
       throw unavailable();
     }
   }
+  /** A listing's JSON body, or the reason there is none. */
+  async function listing(path: string): Promise<Record<string, unknown>> {
+    const response = await get(path, LIST_TIMEOUT_MS);
+    if (response.status !== 200) {
+      await response.body?.cancel().catch(() => undefined);
+      throw unavailable();
+    }
+    const { parts } = await bodyParts(response, MAX_LISTING_BYTES);
+    let data: unknown;
+    try {
+      data = JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(parts)),
+      );
+    } catch {
+      throw invalid();
+    }
+    if (!data || typeof data !== "object") throw invalid();
+    return data as Record<string, unknown>;
+  }
   return {
-    async recent() {
-      return { documents: [], next_before: null };
+    async recent(before) {
+      const query = new URLSearchParams({
+        limit: String(RECENT_PAGE_DOCUMENTS),
+      });
+      if (before !== null) query.set("before", before);
+      const { documents, next_before } = await listing(
+        `${GRAPHS_PATH}?${query}`,
+      );
+      if (
+        !Array.isArray(documents) ||
+        documents.length > RECENT_PAGE_DOCUMENTS ||
+        !(
+          next_before === null ||
+          (typeof next_before === "string" && isCollectorCursor(next_before))
+        )
+      )
+        throw invalid();
+      return {
+        documents: documents.map((entry) => listedDocument(entry, null)),
+        next_before,
+      };
     },
     async list(runId) {
-      const response = await get(
+      const { documents } = await listing(
         `${GRAPHS_PATH}?${new URLSearchParams({ run_id: runId })}`,
-        LIST_TIMEOUT_MS,
       );
-      if (response.status !== 200) {
-        await response.body?.cancel().catch(() => undefined);
-        throw unavailable();
-      }
-      const { parts } = await bodyParts(response, MAX_LISTING_BYTES);
-      let data: unknown;
-      try {
-        data = JSON.parse(
-          new TextDecoder("utf-8", { fatal: true }).decode(
-            Buffer.concat(parts),
-          ),
-        );
-      } catch {
-        throw invalid();
-      }
-      const documents = (data as { documents?: unknown } | null)?.documents;
       if (!Array.isArray(documents)) throw invalid();
       return documents.map((entry) => listedDocument(entry, runId));
     },
