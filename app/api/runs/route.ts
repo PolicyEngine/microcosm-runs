@@ -2,6 +2,8 @@ import { failure } from "@/lib/http";
 import { requestAccess, runDependencies } from "@/lib/run-dependencies";
 import { runListResponse } from "@/lib/runs";
 export const runtime = "nodejs";
+/** Up to four read service listings of up to 30 seconds each. */
+export const maxDuration = 150;
 export async function GET(request: Request) {
   try {
     return await runListResponse(

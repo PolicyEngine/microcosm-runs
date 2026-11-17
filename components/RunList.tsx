@@ -1,8 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { loadRunList } from "@/lib/viewer";
+import { loadMoreRuns } from "@/lib/viewer";
 import {
-  appendRuns,
   runListDate,
   signInHref,
   type RunListEntry,
@@ -26,12 +25,12 @@ export default function RunList() {
   const [moreFailed, setMoreFailed] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
-    loadRunList(null, controller.signal)
+    loadMoreRuns([], null, controller.signal)
       .then((page) => {
         if (page)
           setListed({
             viewer: page.viewer,
-            runs: appendRuns([], page.runs),
+            runs: page.runs,
             nextBefore: page.next_before,
           });
       })
@@ -44,18 +43,14 @@ export default function RunList() {
     if (!nextBefore) return;
     setLoadingMore(true);
     setMoreFailed(false);
-    loadRunList(nextBefore, new AbortController().signal)
+    loadMoreRuns(runs, nextBefore, new AbortController().signal)
       .then((page) => {
         if (page)
-          setListed((current) =>
-            current
-              ? {
-                  viewer: page.viewer,
-                  runs: appendRuns(current.runs, page.runs),
-                  nextBefore: page.next_before,
-                }
-              : current,
-          );
+          setListed({
+            viewer: page.viewer,
+            runs: page.runs,
+            nextBefore: page.next_before,
+          });
       })
       .catch(() => setMoreFailed(true))
       .finally(() => setLoadingMore(false));

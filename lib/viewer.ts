@@ -1,6 +1,8 @@
 import { parseGraphDocument } from "@axiom-foundation/orrery";
 import type { Fetcher } from "./net";
+import { isRunId } from "./run-id";
 import {
+  appendRuns,
   signInHref,
   type RunListEntry,
   type RunListPage,
@@ -93,11 +95,28 @@ export async function loadMoreRuns(
   signal: AbortSignal,
   fetcher: Fetcher = fetch,
 ): Promise<RunListPage | null> {
-  return null;
+  // A page can add no run: its documents may all be of runs already listed,
+  // or, for a signed-out visitor, private. So read on, a few pages at most.
+  let result: RunListPage | null = null;
+  let cursor = before;
+  for (let request = 0; request < MORE_RUN_REQUESTS; request++) {
+    const page = await loadRunList(cursor, signal, fetcher);
+    if (!page) return result;
+    const listed: RunListEntry[] = result?.runs ?? runs;
+    result = {
+      viewer: page.viewer,
+      runs: appendRuns(listed, page.runs),
+      next_before: page.next_before,
+    };
+    if (result.runs.length > listed.length || page.next_before === null)
+      return result;
+    cursor = page.next_before;
+  }
+  return result;
 }
 
-/** A run ID, as the collector accepts one (`runId` in `lib/contract.ts`). */
-const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
+/** The most run list requests one "More runs" makes. */
+export const MORE_RUN_REQUESTS = 3;
 
 function isRunListPage(value: unknown): value is RunListPage {
   if (!value || typeof value !== "object") return false;
@@ -114,7 +133,7 @@ function isRunListPage(value: unknown): value is RunListPage {
       const entry = run as Record<string, unknown>;
       return (
         typeof entry.run_id === "string" &&
-        RUN_ID.test(entry.run_id) &&
+        isRunId(entry.run_id) &&
         typeof entry.build_id === "string" &&
         typeof entry.country_code === "string" &&
         typeof entry.created_at === "string" &&

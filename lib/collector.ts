@@ -264,12 +264,18 @@ export function createCollectorReader(
       throw unavailable();
     }
   }
-  /** A listing's JSON body, or the reason there is none. */
-  async function listing(path: string): Promise<Record<string, unknown>> {
+  /**
+   * A listing's JSON body, or the reason there is none: `refused` names the
+   * error for an answer other than 200, unavailable by default.
+   */
+  async function listing(
+    path: string,
+    refused: (status: number) => ApiError = unavailable,
+  ): Promise<Record<string, unknown>> {
     const response = await get(path, LIST_TIMEOUT_MS);
     if (response.status !== 200) {
       await response.body?.cancel().catch(() => undefined);
-      throw unavailable();
+      throw refused(response.status);
     }
     const { parts } = await bodyParts(response, MAX_LISTING_BYTES);
     let data: unknown;
@@ -289,8 +295,14 @@ export function createCollectorReader(
         limit: String(RECENT_PAGE_DOCUMENTS),
       });
       if (before !== null) query.set("before", before);
+      // The read service answers 422 to a cursor it didn't give. Without a
+      // cursor, a 422 means it has no listing without a run ID yet.
       const { documents, next_before } = await listing(
         `${GRAPHS_PATH}?${query}`,
+        (status) =>
+          before !== null && status === 422
+            ? new ApiError(400, "invalid_cursor")
+            : unavailable(),
       );
       if (
         !Array.isArray(documents) ||

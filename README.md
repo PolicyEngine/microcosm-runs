@@ -129,11 +129,19 @@ set to `collector`, this app reads from it first:
     `public` document, plus "Sign in with Google" where this deployment
     offers sign-in.
   - **More runs:** "More runs" asks `GET /api/runs/?before=<next_before>`.
-    `next_before` is the read service's own cursor, passed through
-    unchanged. It holds the last listed document's time, SHA-256 and
-    submission ID, so a signed-out visitor can read those three values for
-    one private document per page, but never its run, its build or its
-    contents.
+    A page that shows this viewer no runs, such as a page of private
+    documents for a signed-out visitor, is followed by the next one: up to
+    four read service pages in one answer, and up to three answers for one
+    "More runs". A cursor the read service refuses answers 400
+    `invalid_cursor`.
+  - **What the cursor shows:** `next_before` is the read service's own
+    cursor, passed through unchanged. It holds the last listed document's
+    time, SHA-256 and submission ID, so a signed-out visitor can read those
+    three values for one private document per page. It doesn't name the
+    document's run or build or hold any of its contents. But a run page
+    answers 401 for a `?document=` naming a private document of that run,
+    and 404 for any other run, so a visitor who guesses or tries listed run
+    IDs can find which run holds it.
   - **Caching:** answers are `no-store`, and `private, no-store` for staff.
   - **Without a list:** with collector reads off, or a local directory, the
     route answers 404, and the homepage shows its heading alone. It does
