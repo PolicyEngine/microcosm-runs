@@ -94,13 +94,23 @@ export async function loadMoreRuns(
   before: string | null,
   signal: AbortSignal,
   fetcher: Fetcher = fetch,
+  /** Told the list after each page, so it can be shown while more load. */
+  onPage: (page: RunListPage) => void = () => undefined,
 ): Promise<RunListPage | null> {
   // A page can add no run: its documents may all be of runs already listed,
   // or, for a signed-out visitor, private. So read on, a few pages at most.
   let result: RunListPage | null = null;
   let cursor = before;
   for (let request = 0; request < MORE_RUN_REQUESTS; request++) {
-    const page = await loadRunList(cursor, signal, fetcher);
+    let page: RunListPage | null;
+    try {
+      page = await loadRunList(cursor, signal, fetcher);
+    } catch (error) {
+      // Keep what has been read; its `next_before` is the failed request's
+      // cursor, to try again from.
+      if (result === null) throw error;
+      return result;
+    }
     if (!page) return result;
     const listed: RunListEntry[] = result?.runs ?? runs;
     result = {
@@ -108,6 +118,7 @@ export async function loadMoreRuns(
       runs: appendRuns(listed, page.runs),
       next_before: page.next_before,
     };
+    onPage(result);
     if (result.runs.length > listed.length || page.next_before === null)
       return result;
     cursor = page.next_before;

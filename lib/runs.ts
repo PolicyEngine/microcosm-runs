@@ -294,7 +294,15 @@ export async function runListResponse(
       shown.length === 0 && page.next_before !== null && read < RUN_LIST_READS;
       read++
     ) {
-      page = await dependencies.collector.recent(page.next_before);
+      try {
+        page = await dependencies.collector.recent(page.next_before);
+      } catch (error) {
+        // The read service refused a cursor it gave: its answer, not this
+        // request, is at fault.
+        if (error instanceof ApiError && error.code === "invalid_cursor")
+          throw new ApiError(503, "invalid_collector_response");
+        throw error;
+      }
       shown = viewable(page.documents, access);
     }
     const runs: RunListEntry[] = [];

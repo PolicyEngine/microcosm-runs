@@ -5,6 +5,7 @@ import {
   runListDate,
   signInHref,
   type RunListEntry,
+  type RunListPage,
   type ViewerAccess,
 } from "@/lib/run-metadata";
 
@@ -15,45 +16,47 @@ interface Listed {
 }
 
 /**
- * The homepage's list of runs with graph documents, newest first. Without a
- * run list (collector reads off), or when it can't be loaded, the homepage
- * shows its heading alone.
+ * The homepage's list of runs with graph documents, newest first, shown page
+ * by page as it loads. Without a run list (collector reads off), or when its
+ * first page can't be loaded, the homepage shows only its heading and its
+ * introductory sentence.
  */
 export default function RunList() {
   const [listed, setListed] = useState<Listed | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [moreFailed, setMoreFailed] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
-    loadMoreRuns([], null, controller.signal)
-      .then((page) => {
-        if (page)
-          setListed({
-            viewer: page.viewer,
-            runs: page.runs,
-            nextBefore: page.next_before,
-          });
-      })
-      .catch(() => undefined);
+    const show = (page: RunListPage) => {
+      if (!controller.signal.aborted)
+        setListed({
+          viewer: page.viewer,
+          runs: page.runs,
+          nextBefore: page.next_before,
+        });
+    };
+    loadMoreRuns([], null, controller.signal, fetch, show)
+      .catch(() => undefined)
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
     return () => controller.abort();
   }, []);
   if (!listed) return null;
   const { viewer, runs, nextBefore } = listed;
   function more() {
     if (!nextBefore) return;
-    setLoadingMore(true);
+    setLoading(true);
     setMoreFailed(false);
-    loadMoreRuns(runs, nextBefore, new AbortController().signal)
-      .then((page) => {
-        if (page)
-          setListed({
-            viewer: page.viewer,
-            runs: page.runs,
-            nextBefore: page.next_before,
-          });
-      })
+    const show = (page: RunListPage) =>
+      setListed({
+        viewer: page.viewer,
+        runs: page.runs,
+        nextBefore: page.next_before,
+      });
+    loadMoreRuns(runs, nextBefore, new AbortController().signal, fetch, show)
       .catch(() => setMoreFailed(true))
-      .finally(() => setLoadingMore(false));
+      .finally(() => setLoading(false));
   }
   return (
     <section aria-label="Runs" className="mt-6">
@@ -91,7 +94,7 @@ export default function RunList() {
       {nextBefore && (
         <button
           className="mt-4 underline disabled:opacity-50"
-          disabled={loadingMore}
+          disabled={loading}
           onClick={more}
           type="button"
         >
