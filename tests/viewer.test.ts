@@ -1,6 +1,17 @@
 import { expect, test } from "bun:test";
 import { encodeLocation, decodeLocation } from "@axiom-foundation/orrery";
-import { loadDocument, runPagePath, SignInRequired } from "../lib/viewer";
+import {
+  loadDocument,
+  loadMoreRuns,
+  loadRunList,
+  runPagePath,
+  SignInRequired,
+} from "../lib/viewer";
+import {
+  appendRuns,
+  runListDate,
+  type RunListEntry,
+} from "../lib/run-metadata";
 import type { Fetcher } from "../lib/net";
 import { sha256 } from "../lib/contract";
 const document = {
@@ -239,4 +250,233 @@ test("metadata without a source is a publication store record, and collector met
       loadDocument("graph", new AbortController().signal, (async () =>
         Response.json(metadata)) as Fetcher),
     ).rejects.toThrow("Invalid graph publication metadata.");
+});
+
+const runListPage = {
+  viewer: { signed_in_as: null, sign_in_available: true },
+  runs: [
+    {
+      run_id: "uk-run.stage:2",
+      build_id: "build-b",
+      country_code: "GB",
+      created_at: "2026-11-11T09:00:00+00:00",
+      reconstructed: false,
+    },
+  ],
+  next_before: "abc_-1",
+};
+
+test("the run list loads a page of runs, and the next one from its cursor", async () => {
+  const calls: string[] = [];
+  const fetcher = (async (url) => {
+    calls.push(String(url));
+    return Response.json(runListPage);
+  }) as Fetcher;
+  const signal = new AbortController().signal;
+
+  expect(await loadRunList(null, signal, fetcher)).toEqual(runListPage);
+  expect(await loadRunList("abc_-1", signal, fetcher)).toEqual(runListPage);
+  expect(calls).toEqual(["/api/runs/", "/api/runs/?before=abc_-1"]);
+});
+
+test("a deployment without a run list gives none, and a bad run list answer is refused", async () => {
+  const answering = (response: Response) =>
+    (async () => response.clone()) as unknown as Fetcher;
+  const signal = new AbortController().signal;
+
+  expect(
+    await loadRunList(
+      null,
+      signal,
+      answering(Response.json({ error: "not_found" }, { status: 404 })),
+    ),
+  ).toBeNull();
+  const bad: unknown[] = [
+    { ...runListPage, runs: "none" },
+    { ...runListPage, next_before: 5 },
+    { ...runListPage, viewer: null },
+    { ...runListPage, runs: [{ ...runListPage.runs[0], run_id: "a b" }] },
+    { ...runListPage, runs: [{ ...runListPage.runs[0], reconstructed: "no" }] },
+    { ...runListPage, runs: [{ ...runListPage.runs[0], build_id: 1 }] },
+  ];
+  for (const answer of bad)
+    await expect(
+      loadRunList(null, signal, answering(Response.json(answer))),
+    ).rejects.toThrow("Invalid run list.");
+  await expect(
+    loadRunList(
+      null,
+      signal,
+      answering(Response.json({ error: "x" }, { status: 503 })),
+    ),
+  ).rejects.toThrow("The run list is unavailable.");
+});
+
+test("more runs add only those not already listed, and dates show to the minute in UTC", () => {
+  const run = (run_id: string): RunListEntry => ({
+    run_id,
+    build_id: "build",
+    country_code: "GB",
+    created_at: "2026-11-11T09:00:00+00:00",
+    reconstructed: false,
+  });
+
+  expect(
+    appendRuns([run("a"), run("b")], [run("b"), run("c")]).map(
+      (entry) => entry.run_id,
+    ),
+  ).toEqual(["a", "b", "c"]);
+  expect(runListDate("2026-11-12T09:05:59.999+00:00")).toBe(
+    "2026-11-12 09:05 UTC",
+  );
+  expect(runListDate("2026-11-12T10:05:00+01:00")).toBe("2026-11-12 09:05 UTC");
+});
+
+function runListEntry(run_id: string): RunListEntry {
+  return {
+    run_id,
+    build_id: "build",
+    country_code: "GB",
+    created_at: "2026-11-11T09:00:00+00:00",
+    reconstructed: false,
+  };
+}
+
+/** A run list route that answers these pages by their `before`. */
+function runListRoute(pages: Record<string, unknown>) {
+  const asked: (string | null)[] = [];
+  const fetcher = (async (url) => {
+    const before = new URL(
+      String(url),
+      "https://runs.invalid",
+    ).searchParams.get("before");
+    asked.push(before);
+    return Response.json(pages[before ?? ""]);
+  }) as Fetcher;
+  return { asked, fetcher };
+}
+
+const viewer = { signed_in_as: null, sign_in_available: true };
+
+test("more runs read on until a page adds a run not already listed", async () => {
+  const { asked, fetcher } = runListRoute({
+    "cursor-0": {
+      viewer,
+      runs: [runListEntry("run-a")],
+      next_before: "cursor-1",
+    },
+    "cursor-1": {
+      viewer,
+      runs: [runListEntry("run-b")],
+      next_before: "cursor-2",
+    },
+  });
+
+  const more = await loadMoreRuns(
+    [runListEntry("run-a")],
+    "cursor-0",
+    new AbortController().signal,
+    fetcher,
+  );
+
+  expect(more?.runs.map((run) => run.run_id)).toEqual(["run-a", "run-b"]);
+  expect(more?.next_before).toBe("cursor-2");
+  expect(asked).toEqual(["cursor-0", "cursor-1"]);
+});
+
+test("more runs make at most three requests, and stop at the last page", async () => {
+  const repeating = (next_before: string | null) => ({
+    viewer,
+    runs: [runListEntry("run-a")],
+    next_before,
+  });
+  const endless = runListRoute({
+    "": repeating("cursor-1"),
+    "cursor-1": repeating("cursor-2"),
+    "cursor-2": repeating("cursor-3"),
+    "cursor-3": repeating("cursor-4"),
+  });
+  const ending = runListRoute({ "": repeating(null) });
+  const signal = new AbortController().signal;
+
+  const capped = await loadMoreRuns(
+    [runListEntry("run-a")],
+    null,
+    signal,
+    endless.fetcher,
+  );
+  const ended = await loadMoreRuns(
+    [runListEntry("run-a")],
+    null,
+    signal,
+    ending.fetcher,
+  );
+
+  expect(capped?.runs.map((run) => run.run_id)).toEqual(["run-a"]);
+  expect(capped?.next_before).toBe("cursor-3");
+  expect(endless.asked).toEqual([null, "cursor-1", "cursor-2"]);
+  expect(ended?.next_before).toBeNull();
+  expect(ending.asked).toEqual([null]);
+  expect(
+    await loadMoreRuns([], null, signal, (async () =>
+      Response.json({}, { status: 404 })) as unknown as Fetcher),
+  ).toBeNull();
+});
+
+test("more runs report each page as it arrives", async () => {
+  const { fetcher } = runListRoute({
+    "cursor-0": {
+      viewer,
+      runs: [runListEntry("run-a")],
+      next_before: "cursor-1",
+    },
+    "cursor-1": {
+      viewer,
+      runs: [runListEntry("run-b")],
+      next_before: "cursor-2",
+    },
+  });
+  const reported: string[][] = [];
+
+  await loadMoreRuns(
+    [runListEntry("run-a")],
+    "cursor-0",
+    new AbortController().signal,
+    fetcher,
+    (page) => reported.push(page.runs.map((run) => run.run_id)),
+  );
+
+  expect(reported).toEqual([["run-a"], ["run-a", "run-b"]]);
+});
+
+test("a failed request after the first keeps the runs already read, to try again from", async () => {
+  const pages: Record<string, unknown> = {
+    "cursor-0": {
+      viewer,
+      runs: [runListEntry("run-a")],
+      next_before: "cursor-1",
+    },
+  };
+  const fetcher = (async (url) => {
+    const before = new URL(
+      String(url),
+      "https://runs.invalid",
+    ).searchParams.get("before");
+    return before === "cursor-1"
+      ? Response.json({ error: "collector_unavailable" }, { status: 503 })
+      : Response.json(pages[before ?? ""]);
+  }) as Fetcher;
+  const signal = new AbortController().signal;
+
+  await expect(
+    loadMoreRuns([runListEntry("run-a")], "cursor-0", signal, fetcher),
+  ).resolves.toEqual({
+    viewer,
+    runs: [runListEntry("run-a")],
+    next_before: "cursor-1",
+  });
+  // A failed first request still fails.
+  await expect(
+    loadMoreRuns([runListEntry("run-a")], "cursor-1", signal, fetcher),
+  ).rejects.toThrow("The run list is unavailable.");
 });

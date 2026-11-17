@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isRunId } from "./run-id";
 
 export const MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 512 * 1024 * 1024;
@@ -45,12 +46,10 @@ export function publicationId(value: unknown): string {
 export function isPublicationId(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
 }
+export { isRunId };
 /** A telemetry run ID, as the collector accepts one. */
 export function runId(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(value)
-  )
+  if (typeof value !== "string" || !isRunId(value))
     throw new ApiError(400, "invalid_run_id");
   return value;
 }

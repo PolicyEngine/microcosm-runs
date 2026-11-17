@@ -1,10 +1,12 @@
 import {
+  ApiError,
   isPublicationId,
   MAX_FILE_BYTES,
   runId,
   type Publication,
 } from "./contract";
 import {
+  isCollectorCursor,
   UPSTREAM_FILE_NAME,
   type CollectorDocument,
   type CollectorReader,
@@ -15,6 +17,8 @@ import {
   documentSelection,
   type CollectorRunMetadata,
   type DocumentProvenance,
+  type RunListEntry,
+  type RunListPage,
 } from "./run-metadata";
 
 export type {
@@ -56,6 +60,8 @@ const PUBLICATION_METADATA_CACHE = "public, max-age=300";
  * keep it.
  */
 const COLLECTOR_FILE_CACHE = "public, max-age=300";
+/** The most read service pages one run list answer reads. */
+const RUN_LIST_READS = 4;
 /** Anything licensed: never stored by a browser or any shared cache. */
 const PRIVATE = "private, no-store";
 
@@ -251,6 +257,77 @@ export async function runMetadataResponse(
     };
     // Staff answers can list private documents.
     return json(metadata, 200, access.staffEmail ? PRIVATE : "no-store");
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/**
+ * `GET /api/runs/`: a page of the runs the collector holds graph documents
+ * for, newest first, for the homepage's list.
+ *
+ * - One row per run, from its newest document on this page that this viewer
+ *   may see: signed-in staff see every document, everyone else only public
+ *   ones. A page that shows this viewer nothing is followed by the next, up
+ *   to `RUN_LIST_READS` pages in one answer.
+ * - `before` takes the previous page's `next_before`, the read service's own
+ *   cursor, passed through unchanged. It holds the last listed document's
+ *   time, SHA-256 and submission ID, which may be a private document's.
+ * - Without collector reads, or with a local directory, there is no list.
+ */
+export async function runListResponse(
+  search: URLSearchParams,
+  dependencies: RunDependencies,
+  access: RequestAccess = NO_ACCESS,
+): Promise<Response> {
+  try {
+    if (dependencies.local || !dependencies.collector) return notFound();
+    const before = search.get("before");
+    if (before !== null && !isCollectorCursor(before))
+      throw new ApiError(400, "invalid_cursor");
+    // A page can show this viewer nothing (for a signed-out visitor, a page
+    // of private documents), so read on, a few pages at most.
+    let page = await dependencies.collector.recent(before);
+    let shown = viewable(page.documents, access);
+    for (
+      let read = 1;
+      shown.length === 0 && page.next_before !== null && read < RUN_LIST_READS;
+      read++
+    ) {
+      try {
+        page = await dependencies.collector.recent(page.next_before);
+      } catch (error) {
+        // The read service refused a cursor it gave: its answer, not this
+        // request, is at fault.
+        if (error instanceof ApiError && error.code === "invalid_cursor")
+          throw new ApiError(503, "invalid_collector_response");
+        throw error;
+      }
+      shown = viewable(page.documents, access);
+    }
+    const runs: RunListEntry[] = [];
+    const listed = new Set<string>();
+    for (const document of shown) {
+      if (listed.has(document.run_id)) continue;
+      listed.add(document.run_id);
+      runs.push({
+        run_id: document.run_id,
+        build_id: document.build_id,
+        country_code: document.country_code,
+        created_at: document.created_at,
+        reconstructed: document.reconstructed,
+      });
+    }
+    const body: RunListPage = {
+      viewer: {
+        signed_in_as: access.staffEmail,
+        sign_in_available: access.signInAvailable,
+      },
+      runs,
+      next_before: page.next_before,
+    };
+    // Staff answers can list private runs.
+    return json(body, 200, access.staffEmail ? PRIVATE : "no-store");
   } catch (error) {
     return failure(error);
   }

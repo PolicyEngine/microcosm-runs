@@ -7,6 +7,7 @@ import {
   READ_URL_ENV,
   collectorReadConfig,
   createCollectorReader,
+  isCollectorCursor,
 } from "../lib/collector";
 import type { Fetcher } from "../lib/net";
 import { collectorDocument, documentBytes } from "./support/collector";
@@ -218,4 +219,100 @@ test("a missing file is null, other answers are a 503, and paths outside the con
   ])
     await expect(reader(fetcher).file(outside, digest, 10)).rejects.toThrow();
   expect(calls).toEqual([]);
+});
+
+test("lists every run's newest documents a page at a time, with the reader's ID token", async () => {
+  const first = collectorDocument({ run_id: "uk-build.stage:1" });
+  const second = collectorDocument({
+    run_id: "run-2",
+    submission_id: `sub-${"2".repeat(32)}`,
+  });
+  const { calls, fetcher } = recordingFetcher(() =>
+    Response.json({ documents: [first, second], next_before: "eyJhIjoxfQ" }),
+  );
+  expect(await reader(fetcher).recent(null)).toEqual({
+    documents: [first, second],
+    next_before: "eyJhIjoxfQ",
+  });
+  expect(calls[0].url).toBe(
+    "https://orrery-read.example.run.app/v1/orrery-graphs?limit=50",
+  );
+  expect(new Headers(calls[0].init?.headers).get("authorization")).toBe(
+    "Bearer reader-id-token",
+  );
+  expect(calls[0].init?.redirect).toBe("error");
+  expect(calls[0].init?.cache).toBe("no-store");
+
+  const next = recordingFetcher(() =>
+    Response.json({ documents: [], next_before: null }),
+  );
+  expect(await reader(next.fetcher).recent("eyJhIjoxfQ")).toEqual({
+    documents: [],
+    next_before: null,
+  });
+  expect(next.calls[0].url).toBe(
+    "https://orrery-read.example.run.app/v1/orrery-graphs?limit=50&before=eyJhIjoxfQ",
+  );
+});
+
+test("a page of every run's documents the contract does not allow is refused", async () => {
+  const valid = collectorDocument();
+  const bad: unknown[] = [
+    { documents: [valid] },
+    { documents: [valid], next_before: 5 },
+    { documents: [valid], next_before: "" },
+    { documents: [valid], next_before: "not/base64url" },
+    { documents: [valid], next_before: "a".repeat(257) },
+    {
+      documents: [{ ...valid, run_id: "a run with spaces" }],
+      next_before: null,
+    },
+    { documents: [{ ...valid, run_id: 7 }], next_before: null },
+    { documents: [{ ...valid, visibility: "secret" }], next_before: null },
+    { documents: Array.from({ length: 51 }, () => valid), next_before: null },
+    { documents: "none", next_before: null },
+  ];
+  for (const page of bad) {
+    const { fetcher } = recordingFetcher(() => Response.json(page));
+    await expect(reader(fetcher).recent(null)).rejects.toMatchObject({
+      status: 503,
+      code: "invalid_collector_response",
+    });
+  }
+  for (const status of [401, 403, 422, 500, 503]) {
+    const { fetcher } = recordingFetcher(() => new Response("{}", { status }));
+    await expect(reader(fetcher).recent(null)).rejects.toMatchObject({
+      status: 503,
+      code: "collector_unavailable",
+    });
+  }
+});
+
+test("a read service cursor is base64url of at most 256 characters", () => {
+  expect(isCollectorCursor("eyJhIjoxfQ")).toBe(true);
+  expect(isCollectorCursor("a-_Z9".repeat(51) + "a")).toBe(true);
+  for (const cursor of ["", "a".repeat(257), "not/base64url", "a b", "a=", "é"])
+    expect(isCollectorCursor(cursor)).toBe(false);
+});
+
+test("a cursor the read service refuses is a bad request, not an unavailable read service", async () => {
+  const { fetcher } = recordingFetcher(() =>
+    Response.json(
+      {
+        detail: "before is not a cursor this listing gave.",
+        code: "orrery_graph_query_invalid",
+      },
+      { status: 422 },
+    ),
+  );
+
+  await expect(reader(fetcher).recent("AAAA")).rejects.toMatchObject({
+    status: 400,
+    code: "invalid_cursor",
+  });
+  // Without a cursor, a 422 means the read service has no such listing yet.
+  await expect(reader(fetcher).recent(null)).rejects.toMatchObject({
+    status: 503,
+    code: "collector_unavailable",
+  });
 });

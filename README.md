@@ -117,6 +117,42 @@ set to `collector`, this app reads from it first:
   deployment offers no sign-in). Each served file's visibility is checked
   again when it is fetched: one the read service now marks `private` goes
   only to staff.
+- **Run list.** The homepage lists the runs the collector holds documents
+  for, newest first, from `GET /api/runs/`. That route reads the read
+  service's listing without a run or build ID (microcosm-collector#70), 50
+  documents at a time.
+  - **Rows:** one per run, from its newest document on the page that this
+    viewer may see. Each row shows the run ID, linking to its page, the
+    build ID, the country code and the date, and is marked "Reconstructed"
+    when that document is.
+  - **Who sees what:** staff see every run. Everyone else sees runs with a
+    `public` document, plus "Sign in with Google" where this deployment
+    offers sign-in.
+  - **More runs:** "More runs" asks `GET /api/runs/?before=<next_before>`.
+    - **Route:** a read service page that shows this viewer no documents,
+      such as a page of private documents for a signed-out visitor, is
+      followed by the next one, up to four pages in one answer.
+    - **Browser:** an answer that adds no run not already listed is
+      followed by another, up to three requests for one "More runs" and for
+      the first load. Each answer is shown as it arrives. If a later
+      request fails, the runs already read stay, and "More runs" tries
+      again from there.
+    - **Refused cursors:** a cursor the read service refuses answers 400
+      `invalid_cursor`. If it refuses one it gave during the route's own
+      reads, the answer is 503 `invalid_collector_response`.
+  - **What the cursor shows:** `next_before` is the read service's own
+    cursor, passed through unchanged. It holds the last listed document's
+    time, SHA-256 and submission ID, so a signed-out visitor can read those
+    three values for one private document per page. It doesn't name the
+    document's run or build or hold any of its contents. But where this
+    deployment offers sign-in, a run page answers 401 for a `?document=`
+    naming a private document of that run, and 404 for any other run, so a
+    visitor who guesses or tries listed run IDs can find which run holds it.
+  - **Caching:** answers are `no-store`, and `private, no-store` for staff.
+  - **Without a list:** with collector reads off, or a local directory, the
+    route answers 404, and the homepage shows only its heading and its
+    introductory sentence. It does the same when the first page of the list
+    can't be read, for example before the read service has the listing.
 - **Checks.** The server reads each file whole, keeping the parts as they
   arrive and hashing them on the way, at most the listed size for a document
   and 64 MiB for an upstream file, and sends it only if the

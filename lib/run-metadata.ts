@@ -29,6 +29,46 @@ export interface CollectorRunMetadata {
 export type RunMetadata =
   (Publication & { source: "publication" | "local" }) | CollectorRunMetadata;
 
+/** One run of the homepage's list: its newest document this viewer may see. */
+export interface RunListEntry {
+  run_id: string;
+  build_id: string;
+  country_code: string;
+  created_at: string;
+  reconstructed: boolean;
+}
+/** `GET /api/runs/`: one page of the run list, newest first. */
+export interface RunListPage {
+  viewer: ViewerAccess;
+  runs: RunListEntry[];
+  /** Pass as `before` for the next page; null on the last one. */
+  next_before: string | null;
+}
+
+/** `existing` followed by the runs of `incoming` it doesn't already hold. */
+export function appendRuns(
+  existing: RunListEntry[],
+  incoming: RunListEntry[],
+): RunListEntry[] {
+  // A run whose documents fall on two pages is listed once, where its newest
+  // visible document put it.
+  const listed = new Set(existing.map((run) => run.run_id));
+  const added = incoming.filter((run) => {
+    if (listed.has(run.run_id)) return false;
+    listed.add(run.run_id);
+    return true;
+  });
+  return [...existing, ...added];
+}
+
+/** A run list date, to the minute in UTC: `2026-11-12 09:00 UTC`. */
+export function runListDate(createdAt: string): string {
+  const date = new Date(createdAt);
+  return Number.isNaN(date.getTime())
+    ? createdAt
+    : `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
 /** The `document` query value that selects this document. */
 export function documentSelection(
   document: Pick<CollectorDocument, "submission_id" | "document_sha256">,

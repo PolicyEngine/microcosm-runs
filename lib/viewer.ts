@@ -1,6 +1,13 @@
 import { parseGraphDocument } from "@axiom-foundation/orrery";
 import type { Fetcher } from "./net";
-import { signInHref, type RunMetadata } from "./run-metadata";
+import { isRunId } from "./run-id";
+import {
+  appendRuns,
+  signInHref,
+  type RunListEntry,
+  type RunListPage,
+  type RunMetadata,
+} from "./run-metadata";
 
 const invalidLocation = () => new Error("Invalid graph storage URL.");
 
@@ -56,6 +63,97 @@ function graphSource(id: string, url: string): string | URL {
  */
 export function runPagePath(pathname: string): string {
   return pathname.endsWith("/") ? pathname : `${pathname}/`;
+}
+
+/**
+ * A page of the homepage's run list, or null when this deployment has none
+ * (collector reads off).
+ */
+export async function loadRunList(
+  before: string | null,
+  signal: AbortSignal,
+  fetcher: Fetcher = fetch,
+): Promise<RunListPage | null> {
+  const response = await fetcher(
+    `/api/runs/${before === null ? "" : `?before=${encodeURIComponent(before)}`}`,
+    { signal },
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error("The run list is unavailable.");
+  const page: unknown = await response.json().catch(() => null);
+  if (!isRunListPage(page)) throw new Error("Invalid run list.");
+  return page;
+}
+
+/**
+ * The run list after more pages: `runs` with the next pages' runs it doesn't
+ * hold yet, or null when this deployment has no run list. It rejects only
+ * when the first request fails; after a later failure it resolves with the
+ * runs already read, whose `next_before` is the failed request's cursor.
+ */
+export async function loadMoreRuns(
+  runs: RunListEntry[],
+  before: string | null,
+  signal: AbortSignal,
+  fetcher: Fetcher = fetch,
+  /** Told the list after each page, so it can be shown while more load. */
+  onPage: (page: RunListPage) => void = () => undefined,
+): Promise<RunListPage | null> {
+  // A page can add no run: its documents may all be of runs already listed,
+  // or, for a signed-out visitor, private. So read on, a few pages at most.
+  let result: RunListPage | null = null;
+  let cursor = before;
+  for (let request = 0; request < MORE_RUN_REQUESTS; request++) {
+    let page: RunListPage | null;
+    try {
+      page = await loadRunList(cursor, signal, fetcher);
+    } catch (error) {
+      // Keep what has been read; its `next_before` is the failed request's
+      // cursor, to try again from.
+      if (result === null) throw error;
+      return result;
+    }
+    if (!page) return result;
+    const listed: RunListEntry[] = result?.runs ?? runs;
+    result = {
+      viewer: page.viewer,
+      runs: appendRuns(listed, page.runs),
+      next_before: page.next_before,
+    };
+    onPage(result);
+    if (result.runs.length > listed.length || page.next_before === null)
+      return result;
+    cursor = page.next_before;
+  }
+  return result;
+}
+
+/** The most run list requests one "More runs", or the first load, makes. */
+export const MORE_RUN_REQUESTS = 3;
+
+function isRunListPage(value: unknown): value is RunListPage {
+  if (!value || typeof value !== "object") return false;
+  const { viewer, runs, next_before } = value as Record<string, unknown>;
+  if (!viewer || typeof viewer !== "object") return false;
+  const { signed_in_as, sign_in_available } = viewer as Record<string, unknown>;
+  return (
+    (signed_in_as === null || typeof signed_in_as === "string") &&
+    typeof sign_in_available === "boolean" &&
+    (next_before === null || typeof next_before === "string") &&
+    Array.isArray(runs) &&
+    runs.every((run) => {
+      if (!run || typeof run !== "object") return false;
+      const entry = run as Record<string, unknown>;
+      return (
+        typeof entry.run_id === "string" &&
+        isRunId(entry.run_id) &&
+        typeof entry.build_id === "string" &&
+        typeof entry.country_code === "string" &&
+        typeof entry.created_at === "string" &&
+        typeof entry.reconstructed === "boolean"
+      );
+    })
+  );
 }
 
 const SOURCES = new Set(["publication", "local", "collector"]);
