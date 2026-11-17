@@ -398,7 +398,9 @@ test("a file the read service now marks private, or that it no longer holds, is 
 test("a collector that cannot be read is a 503, never a fallback to the publication store", async () => {
   const unavailable: CollectorReader = {
     async list() {
-      const { ApiError } = await import("../lib/contract");
+      throw new ApiError(503, "collector_unavailable");
+    },
+    async recent() {
       throw new ApiError(503, "collector_unavailable");
     },
     async file() {
