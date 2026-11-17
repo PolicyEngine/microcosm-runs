@@ -822,3 +822,31 @@ test("one run list answer reads at most four pages of the read service", async (
     "cursor-3",
   ]);
 });
+
+test("a cursor the read service gave and then refuses is an invalid answer, not a bad request", async () => {
+  const privateDocument = {
+    ...runListDocuments.newest,
+    visibility: "private" as const,
+  };
+  const collector = fakeCollector([], {}, () => "public", {
+    "": { documents: [privateDocument], next_before: "cursor-1" },
+  });
+  const refusing: CollectorReader = {
+    ...collector,
+    async recent(before) {
+      if (before === "cursor-1") throw new ApiError(400, "invalid_cursor");
+      return collector.recent(before);
+    },
+  };
+
+  const response = await runListResponse(
+    search(),
+    dependencies(refusing),
+    anonymous,
+  );
+
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({
+    error: "invalid_collector_response",
+  });
+});

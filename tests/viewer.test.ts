@@ -422,3 +422,61 @@ test("more runs make at most three requests, and stop at the last page", async (
       Response.json({}, { status: 404 })) as unknown as Fetcher),
   ).toBeNull();
 });
+
+test("more runs report each page as it arrives", async () => {
+  const { fetcher } = runListRoute({
+    "cursor-0": {
+      viewer,
+      runs: [runListEntry("run-a")],
+      next_before: "cursor-1",
+    },
+    "cursor-1": {
+      viewer,
+      runs: [runListEntry("run-b")],
+      next_before: "cursor-2",
+    },
+  });
+  const reported: string[][] = [];
+
+  await loadMoreRuns(
+    [runListEntry("run-a")],
+    "cursor-0",
+    new AbortController().signal,
+    fetcher,
+    (page) => reported.push(page.runs.map((run) => run.run_id)),
+  );
+
+  expect(reported).toEqual([["run-a"], ["run-a", "run-b"]]);
+});
+
+test("a failed request after the first keeps the runs already read, to try again from", async () => {
+  const pages: Record<string, unknown> = {
+    "cursor-0": {
+      viewer,
+      runs: [runListEntry("run-a")],
+      next_before: "cursor-1",
+    },
+  };
+  const fetcher = (async (url) => {
+    const before = new URL(
+      String(url),
+      "https://runs.invalid",
+    ).searchParams.get("before");
+    return before === "cursor-1"
+      ? Response.json({ error: "collector_unavailable" }, { status: 503 })
+      : Response.json(pages[before ?? ""]);
+  }) as Fetcher;
+  const signal = new AbortController().signal;
+
+  await expect(
+    loadMoreRuns([runListEntry("run-a")], "cursor-0", signal, fetcher),
+  ).resolves.toEqual({
+    viewer,
+    runs: [runListEntry("run-a")],
+    next_before: "cursor-1",
+  });
+  // A failed first request still fails.
+  await expect(
+    loadMoreRuns([runListEntry("run-a")], "cursor-1", signal, fetcher),
+  ).rejects.toThrow("The run list is unavailable.");
+});
